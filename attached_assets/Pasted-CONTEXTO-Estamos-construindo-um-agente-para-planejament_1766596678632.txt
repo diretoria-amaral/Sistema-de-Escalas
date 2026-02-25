@@ -1,0 +1,97 @@
+CONTEXTO
+Estamos construindo um agente para planejamento e geração de escalas/convocações de colaboradores intermitentes, com base em relatórios do PMS Desbravador. A base (Data Lake) já está implementada conforme V4/V5: 
+- Detecção por conteúdo: HP diário + CHECKIN diário + CHECKOUT diário
+- Regra REAL vs FORECAST por as_of_date (HP evolutivo)
+- occupancy_latest com precedência REAL > FORECAST
+- Deduplicação por (target_date, generated_at)
+- Estatísticas EWMA por dia da semana + distribuição horária de checkins/checkouts
+Também já existe o conceito de Forecast Run / Baseline para planejamento semanal.
+
+OBJETIVO DO PROMPT 12 (ONDA 2.1)
+Implementar a “arquitetura de produto” e ajustes estruturais de multissetor:
+1) Menu/Sidebar com as seções e páginas conforme mapa abaixo
+2) Garantir que “Atividades” são SEMPRE vinculadas a um setor (sector_id) e que a UI filtra por setor
+3) Reorganizar “Regras” em duas áreas: 
+   - Regras Trabalhistas (globais) 
+   - Regras Operacionais por Setor (com botões/abas dinâmicos para cada setor cadastrado)
+4) Remover/evitar duplicidade de páginas (ex.: GovernanceRulesPage vs RulesPage) — manter apenas a versão multissetor e atualizar rotas/links
+5) Criar páginas-base (placeholders funcionais) para a Onda 2 e futura evolução, sem quebrar funcionalidades atuais.
+
+MAPA DE NAVEGAÇÃO (SIDEBAR)
+A. Cadastros
+  A1. Funções (Roles)
+  A2. Regimes de trabalho (Work Regimes)
+  A3. Tipos de relatórios (Report Types)
+  A4. Colaboradores (Employees)
+  A5. Setores (Sectors)
+  A6. Atividades (Activities)  <<< obrigatório vincular ao setor
+B. Operação
+  B1. Calendário anual (Feriados/Exceções)  (placeholder por enquanto)
+  B2. Regras trabalhistas (Globais)
+  B3. Regras operacionais por setor (botões por setor)
+  B4. Área de operações / parâmetros por setor (placeholder)
+  B5. Programação de atividades por setor (placeholder)
+  B6. Turnos/templates por setor (placeholder)
+  B7. Geração de proposta de escalas por setor (placeholder, mas linkar ao Baseline existente)
+  B8. Confirmação/alterações (placeholder)
+  B9. Convocações: lista/geração por setor (placeholder)
+  B10. Aceite/recusa e recálculo (placeholder)
+  B11. Sugestões diárias de ajuste (placeholder)
+C. Inteligência
+  C1. Upload de relatórios (já existe)
+  C2. Estatísticas por setor (placeholder)
+D. Consultas/Históricos
+  D1. Histórico convocações por colaborador (placeholder)
+  D2. Histórico demanda por semana/setor (placeholder)
+  D3. Histórico projeção x real (placeholder)
+  D4. Governança: vagos sujos x estadias por dia (placeholder)
+  D5. Checkins/checkouts por hora (placeholder)
+  D6. Intervalo disponível para arrumação (placeholder)
+  D7. Manutenção corretiva por dia (placeholder)
+  D8. Produtividade por camareira (placeholder)
+
+REQUISITOS TÉCNICOS
+1) FRONTEND
+- Implementar um Sidebar com agrupamentos (Cadastros / Operação / Inteligência / Consultas).
+- Criar páginas placeholder com layout consistente (título, descrição, “Em breve” + estrutura pronta).
+- Consolidar “Regras”:
+  - Criar/Manter uma única página principal /rules com tabs:
+    TAB 1: Regras Trabalhistas (Globais)
+    TAB 2: Regras Operacionais por Setor
+      - Nesta TAB, listar botões/abas gerados dinamicamente a partir dos setores cadastrados.
+      - Ao clicar num setor, carregar e salvar parâmetros operacionais daquele setor.
+- Remover rotas redundantes e ajustar links do menu para apontar para as páginas corretas.
+- Em “Atividades”: 
+  - Exigir seleção de setor no formulário (dropdown de setores).
+  - Filtrar listagem por setor selecionado.
+  - Não permitir criar atividade sem sector_id.
+- Manter compatibilidade com o que já existe (não quebrar Intelligence, Reports, Baseline/Forecast Run atual).
+
+2) BACKEND
+- Validar que Activity possui sector_id NOT NULL (migrar se necessário).
+- Criar endpoints básicos para:
+  - listar setores
+  - CRUD de atividades com filtro por sector_id
+  - obter/salvar regras trabalhistas globais (já existe — apenas padronizar rotas/nomes)
+  - obter/salvar regras operacionais por setor (padronizar por sector_id)
+- Não reescrever o Data Lake agora; apenas garantir que as rotas e modelos se alinham ao multissetor.
+
+3) LIMPEZA / PADRONIZAÇÃO
+- Se existir GovernanceRulesPage separado, descontinuar (ou deixar como alias que redireciona) e usar a página /rules multissetor.
+- Se existir ActivitiesPage sem setor, atualizar.
+- Ajustar nomes/rotas no frontend para consistência (ex.: /employees, /sectors, /roles, /activities, /rules, /intelligence, /reports, /forecast-runs, etc.).
+
+4) ENTREGÁVEIS
+- Sidebar novo funcionando.
+- Páginas novas (placeholders) criadas e navegáveis.
+- Página de regras consolidada e multissetor.
+- Página de atividades com setor obrigatório e filtro por setor.
+- Código compilando e rodando sem erros; migrations aplicadas se necessário.
+
+CRITÉRIO DE ACEITAÇÃO
+- Eu consigo navegar pelo menu e ver todas as páginas (mesmo placeholders).
+- Eu consigo cadastrar setores, depois cadastrar atividades vinculadas a cada setor.
+- Eu consigo abrir Regras e ver claramente:
+  - regras trabalhistas globais
+  - regras operacionais por setor com botões por setor
+- Nada do Data Lake/Intelligence quebra.

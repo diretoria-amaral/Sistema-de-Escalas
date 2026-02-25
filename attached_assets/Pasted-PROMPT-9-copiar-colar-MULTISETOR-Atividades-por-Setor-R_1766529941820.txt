@@ -1,0 +1,203 @@
+PROMPT 9 (copiar/colar) — MULTISETOR: Atividades por Setor + Regras em 2 Camadas (Global x Setorial)
+
+Você está trabalhando em um agente (web app) para planejamento e geração de escalas de colaboradores (principalmente intermitentes), alimentado por relatórios do PMS (HP diário + Checkin/Checkout diário), com base de dados e estatísticas já implementadas (V4).
+
+Nesta fase (Prompt 9), precisamos concluir a transição definitiva do sistema de “governança” para um sistema multissetor. Isso exige:
+
+Cadastro de atividades obrigatoriamente vinculado a um setor
+
+Separação clara das regras em duas camadas:
+
+Regras Trabalhistas (Globais): válidas para todos os setores
+
+Regras Operacionais e Indicadores (Por Setor): cada setor possui seus próprios parâmetros e indicadores
+
+Objetivo: preparar o produto para expansão (Recepção, Manutenção etc.) sem duplicar telas e sem misturar regras legais com regras operacionais.
+
+1) ALTERAÇÃO DE DOMÍNIO: ATIVIDADES DEVEM SER MULTISETOR
+1.1 Banco de Dados / Modelos
+
+Garanta que toda atividade cadastrada possua sector_id (obrigatório).
+
+Se existir mais de um modelo de “atividade” (ex.: GovernanceActivity), refatore para um conceito genérico:
+
+Opção preferida: criar/usar um único modelo Activity (ou equivalente) com:
+
+id
+
+sector_id (FK)
+
+name (ou nome)
+
+description
+
+unit (ex.: “quarto”, “checkin”, “checkout”, “OS” etc.) — opcional
+
+avg_time_minutes (ou tempo_medio_min) — opcional (muito útil para setores operacionais)
+
+is_active
+
+created_at, updated_at
+
+Se a base já tiver atividades antigas sem setor, faça migração:
+
+atribuir sector_id padrão para “Governança” (ou o primeiro setor cadastrado), e registrar em audit_log.
+
+1.2 API
+
+Endpoints precisam suportar:
+
+listar atividades por setor: GET /activities?sector_id=
+
+criar: POST /activities (com sector_id)
+
+editar: PUT /activities/{id} (permitir trocar setor se necessário)
+
+deletar/inativar: DELETE /activities/{id} ou PATCH is_active=false
+
+1.3 Frontend (UI)
+
+Na página de atividades:
+
+Exigir seleção de setor para criar atividade
+
+Mostrar coluna Setor
+
+Filtrar por setor (botões, dropdown ou tabs)
+
+Se já houver uma ActivitiesPage genérica, apenas complete para garantir que não existe fluxo de criar atividade sem setor.
+
+2) SEPARAR “REGRAS” EM 2 ABAS / 2 ÁREAS DISTINTAS
+
+Hoje há mistura de regras legais/trabalhistas com regras operacionais. Isso precisa virar 2 áreas:
+
+2.1 Regras Trabalhistas (Globais)
+
+Criar uma página/tela: “Regras Trabalhistas” (global) com CRUD simples.
+
+O que deve conter
+
+Conjunto de parâmetros globais aplicáveis a qualquer setor (exemplos):
+
+antecedência mínima de convocação (ex.: 72h)
+
+limites de jornada (conforme política interna)
+
+regras de intervalo/refeição (ex.: 1h)
+
+restrições de dias consecutivos (se adotado)
+
+validações gerais do contrato intermitente
+
+Estrutura recomendada no banco:
+
+tabela legal_rules_global (ou reaproveitar intermittent_rules, mas garantindo que é global)
+
+campos: key, value, value_type, description, is_active, updated_at
+
+Deve existir endpoint:
+
+GET /legal-rules
+
+PUT /legal-rules (atualiza por chave) ou CRUD completo
+
+Integração obrigatória
+
+O schedule_validator deve consumir essas regras globais (não regras de setor).
+
+2.2 Regras Operacionais e Indicadores (Por Setor)
+
+Criar uma página/tela: “Regras Operacionais (por Setor)” com um botão/tab para cada setor cadastrado.
+
+Comportamento
+
+No topo: tabs/botões com os setores (Governança, Recepção, Manutenção…)
+
+Ao selecionar um setor, a tela mostra e permite editar os parâmetros operacionais daquele setor.
+
+O que deve conter (estrutura genérica)
+
+utilization_target (meta de aproveitamento de horas) por setor (percentual)
+
+buffer_percent (margem operacional do setor)
+
+Indicadores e parâmetros específicos:
+
+Governança: tempo médio vago sujo, tempo médio estada, etc.
+
+Recepção: cobertura mínima por horário, picos, etc. (placeholder por enquanto)
+
+Manutenção: SLA/plantão, etc. (placeholder)
+
+Estrutura recomendada no banco:
+
+tabela sector_operational_rules (ou reaproveitar weekly_parameters / governance_rules, mas refatorar para setor genérico)
+
+campos:
+
+sector_id
+
+params_json (flexível, versionável)
+
+effective_from (opcional)
+
+updated_at
+
+Integração obrigatória
+
+O schedule_generator deve:
+
+usar regras globais para validações legais
+
+usar regras operacionais do setor selecionado para calcular escala do setor
+
+Não misturar as duas camadas em um único objeto.
+
+3) NAVEGAÇÃO / MENU
+
+Atualizar o menu para que “Regras” vire um agrupador com 2 itens:
+
+Regras Trabalhistas (Global)
+
+Regras Operacionais (por Setor)
+
+Se já existir “GovernanceRulesPage”, ela deve ser:
+
+substituída pela nova tela setorial, OU
+
+mantida temporariamente mas com redirecionamento e aviso “deprecado”.
+
+4) CRITÉRIOS DE ACEITE (obrigatórios)
+
+Não é possível criar atividade sem setor (API e UI validam)
+
+Existe tela Regras Trabalhistas (Global) com persistência no banco
+
+Existe tela Regras Operacionais (por Setor) com tabs/botões por setor
+
+O gerador/validador passa a consumir:
+
+regras globais no validador (legal)
+
+regras setoriais no cálculo operacional
+
+Migração executa sem quebrar dados existentes (atividades antigas recebem setor padrão)
+
+Toda alteração relevante gera registro em audit_log
+
+5) ORIENTAÇÕES DE IMPLEMENTAÇÃO (importante)
+
+Faça mudanças mínimas e seguras: preferir params_json para regras setoriais.
+
+Versionar parser_version/method_version continua como está (não alterar nesta etapa).
+
+Entregar com:
+
+alterações no backend (models/schemas/routes/services)
+
+alterações no frontend (novas páginas e navegação)
+
+uma pequena bateria de testes (pelo menos: criar atividade com setor, listar por setor, editar regras globais, editar regras do setor)
+
+Entregue a implementação completa.
+Se houver arquivos antigos específicos de governança, refatore com cuidado e deixe claro no README quais endpoints/páginas foram substituídos.

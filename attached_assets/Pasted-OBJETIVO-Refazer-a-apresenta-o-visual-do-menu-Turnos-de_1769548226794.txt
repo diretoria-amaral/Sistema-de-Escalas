@@ -1,0 +1,123 @@
+OBJETIVO
+Refazer a apresentação visual do menu “Turnos de Trabalho” para ficar agradável, profissional e funcional,
+eliminando falhas visuais na coluna “Ações” e padronizando o layout (grid/table), botões e espaçamentos.
+NÃO alterar campos, modelo de dados ou regras de negócio.
+
+ESCOPO
+Frontend apenas:
+- Tela de listagem (grade Seg–Dom)
+- Modal “Novo/Editar Turno”
+- Responsividade e estética geral
+Arquivo base atual: frontend/src/pages/WorkShiftManagement.tsx (ou equivalente)
+
+========================================================
+1) LISTAGEM: GRID/TABELA BONITA E FUNCIONAL
+========================================================
+
+REQUISITOS VISUAIS (OBRIGATÓRIOS)
+1) Página em layout de “card container”:
+- Cabeçalho com título + seletor de setor + botões (Novo Turno / Mostrar inativos)
+- Conteúdo dentro de um Card com padding generoso (p-4 ou p-6)
+
+2) Tabela:
+- bordas suaves (rounded), separadores leves, cabeçalho fixo opcional
+- sem “linhas quebradas” nem overflow fora do container
+
+3) Colunas com largura controlada:
+- Coluna “Turno”: largura fixa (ex.: 220px) e quebra de linha controlada
+- Colunas Seg–Dom: largura uniforme (ex.: 120px cada) com conteúdo centralizado
+- Coluna “Ações”: largura fixa (ex.: 140px) para não quebrar layout
+
+4) Alinhamento e tipografia:
+- Nome do turno em negrito
+- Badge Ativo/Inativo discreto
+- Horários com fonte monoespaçada (ex.: font-mono) para alinhar visualmente
+- “—” para dias vazios com opacidade menor
+
+5) Destaque de horários mandatórios:
+- Quando start_constraint == MANDATORY: colorir somente o horário de entrada
+- Quando end_constraint == MANDATORY: colorir somente o horário de saída
+- Não usar cores agressivas; usar cor consistente com tema.
+
+AÇÃO: corrigir o bloco “Ações”
+- Colocar os botões dentro de um container flex:
+  <div className="flex gap-2 justify-end">
+- Botões devem ser do tipo “icon button” + tooltip:
+  - Editar (ícone lápis)
+  - Desativar/Ativar (ícone toggle)
+  - Excluir (ícone lixeira) — se existir
+- Nunca permitir texto “Ações” renderizado dentro das células (somente no cabeçalho).
+- Se estiver quebrando visualmente, é porque:
+  - há texto extra na célula
+  - width mínima não está definida
+  - overflow não está tratado
+Corrigir com:
+  - className="whitespace-nowrap"
+  - className="min-w-[140px]"
+  - overflow-hidden no container da tabela
+
+RESPONSIVIDADE (OBRIGATÓRIA)
+- Em telas menores:
+  - tabela deve ter scroll horizontal dentro do card (overflow-x-auto)
+  - “Ações” deve continuar visível (coluna fixa à direita se fácil; senão, manter no fim com min-width)
+- NÃO permitir que os botões desçam para outra linha e “rasguem” a tabela.
+
+========================================================
+2) MODAL “NOVO/EDITAR TURNO”: MUITO MAIS BONITO (sem alterar campos)
+========================================================
+
+REQUISITOS
+1) Estrutura:
+- Modal largo (ex.: max-w-5xl), com título claro:
+  “Novo Turno” / “Editar Turno”
+- Subtítulo: “Defina horários por dia (Seg–Dom) e marque início/fim como Mandatório/Flexível”
+
+2) Grade por dias:
+- Tabela interna com:
+  Dia | Início | (Mand/Flex) | Saída intervalo | Retorno | Final | (Mand/Flex) | Ações
+- Inputs tipo time, tamanho consistente, alinhados
+
+3) Botões de utilidade no topo do modal:
+- “Replicar segunda → todos”
+- “Limpar todos”
+Esses botões devem ser pequenos, estilo “secondary”, alinhados à direita.
+
+4) Botão “Limpar” por dia:
+- em cada linha, botão pequeno “Limpar” (ou ícone vassoura) com tooltip
+- ação: zerar os horários do dia e resetar constraints para FLEXIBLE
+
+5) Rodapé do modal:
+- Cancelar (secondary)
+- Salvar (primary)
+- loading state no Salvar
+
+6) Validação visual:
+- Erros por linha devem aparecer abaixo da linha (texto pequeno, vermelho suave)
+- Não quebrar layout
+
+========================================================
+3) PADRÃO DE COMPONENTES (se disponível no projeto)
+========================================================
+
+- Preferir componentes já usados no sistema:
+  Card, Button, Badge, Tooltip, Dialog/Modal
+- Se existir lucide-react:
+  usar Pencil, Trash2, ToggleLeft/Right ou Power.
+- Evitar HTML cru feio; padronizar.
+
+========================================================
+4) CRITÉRIOS DE ACEITE
+========================================================
+
+PASSA se:
+- A tela fica visualmente “profissional”, com alinhamentos e espaçamentos consistentes
+- A coluna “Ações” não apresenta falhas, quebras ou textos estranhos
+- Botões de ações ficam em linha, com ícones e tooltips
+- Modal ficou limpo e legível, com replicar e limpar por dia funcionando
+- Não houve mudança de campos/modelos/regras
+
+FALHA se:
+- “Ações” continuar quebrando a tabela
+- Botões desalinhados ou quebrando linha
+- Texto truncado de forma inadequada
+- Campos alterados (não permitido)

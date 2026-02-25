@@ -1,0 +1,113 @@
+CONTEXTO
+Você está evoluindo o agente de escalas (convocações intermitentes) já com Data Lake V4 implementado (HP diário mês corrente + próximo mês; CHECKIN/CHECKOUT diário; regra REAL vs FORECAST por as_of_date; occupancy_latest; EWMA por weekday; distribuição horária). Agora implemente a FASE “Forecast Run / Baseline de Planejamento” + reorganização de Regras e Atividades para suportar MULTISETOR.
+
+OBJETIVO GERAL
+1) Implementar o conceito de Forecast Run e Baseline (congelar a visão usada para planejar a semana seguinte, auditável).
+2) Dividir “Regras” em:
+   A) Regras Trabalhistas (globais, válidas para todos os setores)
+   B) Regras Operacionais por Setor (parâmetros/indicadores específicos; UI com botões/abas por setor)
+3) No cadastro de Atividades, exigir vínculo com setor (sector_id), pois o agente não é exclusivo de Governança.
+
+REQUISITOS FUNCIONAIS (MÍNIMO)
+A) FORECAST RUN / BASELINE
+- Criar entidade/tabela “forecast_run”:
+  - id, run_date (timestamp), week_start (date), week_end (date),
+  - is_baseline (bool),
+  - baseline_locked (bool) default true quando is_baseline,
+  - created_by, created_at,
+  - method_version, parser_version (ou referências), notes.
+- Criar entidade/tabela “forecast_run_daily”:
+  - id, forecast_run_id,
+  - target_date,
+  - weekday_pt,
+  - occ_raw_pct (float),
+  - bias_pp_applied (float),
+  - safety_pp_applied (float),
+  - occ_adj_pct (float),
+  - source_snapshot_ref (json: referências para snapshots/arquivos/created_at usados),
+  - created_at.
+- Regra:
+  - Toda SEXTA-FEIRA: gerar um forecast_run para a semana seguinte (segunda–domingo), marcar is_baseline=true e baseline_locked=true.
+  - occ_raw_pct deve vir do FORECAST disponível “as-of run_date” (o snapshot mais recente <= run_date) para cada target_date.
+  - occ_adj_pct = clamp(occ_raw_pct + bias_pp(weekday) + safety_pp(weekday), 0..100).
+  - Guardar bias_pp e safety_pp aplicados por dia para auditoria.
+- Ajustes diários pós-baseline:
+  - Permitir criar “forecast_run” do tipo adjustment (is_baseline=false) vinculando ao baseline (baseline_id ou parent_run_id).
+  - Registrar motivo/autor do ajuste.
+  - NÃO sobrescrever o baseline — baseline é referência histórica para comparação.
+
+B) REGRAS — 2 ABAS
+- Criar “Regras Trabalhistas (Globais)”:
+  - Deve conter os parâmetros que valem para qualquer setor (ex.: 72h antecedência, descansos, limites máximos de horas/dia, intervalo mínimo entre jornadas, 1h refeição etc.).
+  - Persistir em tabela “legal_rules_global” (ou equivalente). Versionar alterações.
+- Criar “Regras Operacionais por Setor”:
+  - Deve listar setores cadastrados e permitir selecionar um setor (botões/abas dinâmicos).
+  - Cada setor terá seus parâmetros operacionais e indicadores (ex.: Governança: tempo_vago_sujo, tempo_estadia, utilization/meta aproveitamento, buffers, templates de turnos; Recepção: cobertura mínima por hora, picos; Manutenção: plantões mínimos etc.).
+  - Persistir em tabela “sector_operational_rules” (sector_id, params_json, version, updated_at, updated_by).
+  - Versionar (method_version) para rastreabilidade.
+
+C) ATIVIDADES VINCULADAS AO SETOR
+- Atualizar model/tabela “activities”:
+  - Incluir sector_id obrigatório.
+- Atualizar CRUD de atividades:
+  - UI deve exigir setor.
+  - Listagem deve permitir filtrar por setor.
+  - O gerador de escala de um setor deve usar somente atividades daquele setor.
+- Se houver necessidade de “atividade transversal”:
+  - Implementar abordagem simples: duplicar atividade por setor (recomendado no MVP).
+  - Alternativa (opcional): tabela de relacionamento activity_sectors (N:N), mas só se não complicar o MVP.
+
+INTERFACE (FRONTEND)
+1) Nova página “Forecast Runs / Baseline”
+- Listar forecast_runs (baseline e ajustes).
+- Abrir detalhes: mostrar week_start–week_end e tabela target_date: occ_raw, bias, safety, occ_adj.
+- Permitir comparar baseline vs ajuste (quando existir).
+- Botão “Gerar Baseline da próxima semana (sexta)” (para testes) e “Gerar Ajuste (hoje)” com motivo.
+
+2) Página “Regras”
+- Substituir a atual por duas subpáginas/abas:
+  - “Regras Trabalhistas (Global)”
+  - “Regras Operacionais (por Setor)” com seletor por setor (botões/abas dinâmicos).
+
+3) Página “Atividades”
+- Incluir campo obrigatório “Setor”.
+- Filtragem por setor.
+
+BACKEND/API
+- Endpoints mínimos:
+  - POST /forecast-runs/baseline (cria baseline para próxima semana; aceitar override de run_date para teste)
+  - POST /forecast-runs/adjustment (cria ajuste ligado a baseline_id/parent_run_id)
+  - GET /forecast-runs (lista)
+  - GET /forecast-runs/{id} (detalhe)
+  - GET/PUT /rules/legal (globais)
+  - GET/PUT /rules/sector/{sector_id} (operacionais)
+  - Activities CRUD incluindo sector_id obrigatório
+
+BANCO DE DADOS / MIGRATIONS
+- Criar migrations para:
+  - forecast_runs
+  - forecast_run_daily
+  - legal_rules_global
+  - sector_operational_rules
+  - alterar activities adicionando sector_id NOT NULL (com fallback de migração: se já existirem atividades, setar um setor default e exigir ajuste pelo usuário na UI).
+
+AUDITORIA / LOG
+- Toda criação de baseline e ajuste deve gerar audit_log:
+  - event_type: BASELINE_CREATED / ADJUSTMENT_CREATED / RULES_UPDATED / ACTIVITY_UPDATED
+  - payload_json com diffs e versões.
+
+TESTES / VALIDAÇÃO
+- Teste 1: baseline criado com 7 dias e occ_raw obtido do snapshot as-of run_date.
+- Teste 2: occ_adj correto com bias/safety.
+- Teste 3: ajuste não altera baseline.
+- Teste 4: atividades exigem sector_id e filtro funciona.
+- Teste 5: regras globais vs por setor salvam e reaparecem corretamente.
+
+RESTRIÇÕES
+- Não quebrar o Data Lake V4 já aprovado.
+- Manter parser_version/method_version em metadados.
+- Priorizar robustez e simplicidade (MVP). Evitar overengineering.
+
+ENTREGA
+- Implementar tudo acima com código pronto, migrations, endpoints e UI.
+- Atualizar README com como testar baseline e ajustes localmente.

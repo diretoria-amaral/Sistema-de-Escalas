@@ -1,0 +1,104 @@
+Você é um Arquiteto Sênior responsável por governança de regras do agente.
+Implemente um novo módulo operacional sem quebrar o fluxo atual, e sem dados fictícios.
+
+OBJETIVO
+Criar no menu “Operações” o item:
+- “Regras de Cálculos (por Setor)”
+para definir, hierarquizar e descrever como o agente:
+(A) calcula demanda de trabalho do setor
+(B) aloca atividades na programação semanal
+(C) determina quais atividades “CALCULADA_PELO_AGENTE” devem ser inseridas automaticamente
+
+CONCEITO (OBRIGATÓRIO)
+- Regras são por setor e versionáveis por data/estado (ativa/inativa).
+- Regras funcionam como “contrato” entre:
+  - parâmetros do setor
+  - atividades cadastradas
+  - programação semanal
+  - cálculo de demanda e geração de escala
+
+MODELO MÍNIMO DE DADOS (sugestão obrigatória, ajustável se necessário)
+Criar entidade “regra_calculo_setor” com:
+- id
+- setor_id (FK)
+- nome
+- prioridade (int) — define hierarquia e ordem de aplicação
+- escopo (ENUM):
+  - DEMANDA (como calcular horas/minutos)
+  - PROGRAMACAO (como inserir/ordenar atividades na semana)
+  - AJUSTES (como ajustar por estatística/HP/viés por dia)
+- condicao_json (JSON) — ex.: {"driver":"ocupacao", "min":0.0, "max":1.0, "dias":["SEG","TER"] }
+- acao_json (JSON) — ex.: {"inserir_atividade_id":123, "unidade":"minutos", "formula":"x * parametro_y"}
+- ativo (bool)
+- criado_em / atualizado_em
+
+IMPORTANTE:
+- NÃO executar fórmulas perigosas via eval.
+- Se houver necessidade de expressões, usar:
+  - um mini-language segura (ex.: operadores +, -, *, /, min, max)
+  - ou templates pré-definidos por “tipo_regra” (recomendado).
+- Service deve validar schema do JSON e rejeitar regras inválidas.
+
+TELA / UX
+- Menu: Operações > Regras de Cálculos (por Setor)
+- No topo: seleção obrigatória de Setor
+- Depois: lista de regras do setor com:
+  - prioridade (editável)
+  - escopo
+  - status ativo
+  - botão “Nova regra”
+  - botão “Duplicar regra”
+- Editor de regra com:
+  - Nome
+  - Prioridade
+  - Escopo
+  - Condição (campos guiados; JSON avançado opcional)
+  - Ação (campos guiados; JSON avançado opcional)
+  - Ativo/Inativo
+- Mensagens explícitas em Português.
+
+COMPORTAMENTO DO AGENTE (INTEGRAÇÃO OBRIGATÓRIA)
+1) Ao gerar Programação Semanal (modo AUTO):
+   - Buscar regras do setor (ativas) ordenadas por prioridade
+   - Identificar atividades:
+     a) RECORRENTES aplicáveis (via periodicidades)
+     b) CALCULADAS_PELO_AGENTE que devem ser inseridas (via regras PROGRAMACAO)
+     c) EVENTUAIS (somente manuais)
+   - Inserir na programação semanal somente o que regras determinarem + recorrentes
+   - Registrar “driver” e “origem” da inserção (AUTO vs MANUAL)
+
+2) Ao calcular DEMANDA do setor:
+   - Aplicar regras de escopo DEMANDA (prioridade)
+   - Somar minutos/hora variáveis (ocupação etc.) + constantes (recorrentes/eventuais programadas)
+   - Se houver ajustes estatísticos/HP, aplicar regras de escopo AJUSTES por último
+
+3) Falhas:
+   - Se setor não possui regras ativas e existem atividades CALCULADAS_PELO_AGENTE:
+     bloquear modo AUTO e orientar usuário a cadastrar regras
+   - Nunca assumir defaults invisíveis.
+
+ARQUITETURA (OBRIGATÓRIA)
+- Backend:
+  - Model + Migration Alembic (nova tabela regras)
+  - Schemas Pydantic com validação de JSON
+  - Routers REST:
+    - /api/regras-calculo-setor (CRUD, filtrando por setor_id)
+    - Ajustar services existentes que fazem:
+      - programação semanal
+      - demanda
+      - governança
+- DataLayer:
+  - Se houver ingestão externa, normalizar em adapters (não no service)
+- Frontend:
+  - Nova página em Operações com layout padrão + breadcrumbs
+  - Chamadas via /api/... (sem acessar API direto fora do proxy)
+
+CRITÉRIOS DE ACEITAÇÃO
+1) Cadastrar regras para um setor e persistir.
+2) Ordenar por prioridade e verificar aplicação na programação semanal (AUTO).
+3) Atividades CALCULADAS_PELO_AGENTE entram automaticamente apenas se regra definir.
+4) Atividades RECORRENTES entram via periodicidade; EVENTUAIS somente manual.
+5) Cálculo de demanda inclui:
+   - variável (ocupação etc.)
+   + horas constantes programadas (recorrentes/eventuais)
+6) Erros claros quando faltarem regras/parâmetros.

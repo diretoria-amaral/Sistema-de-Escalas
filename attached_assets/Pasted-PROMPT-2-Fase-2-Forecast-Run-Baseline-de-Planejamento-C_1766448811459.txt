@@ -1,0 +1,174 @@
+PROMPT 2 — Fase 2: Forecast Run / Baseline de Planejamento + Comparativo Planejado x Atualizado (V4 já implementado)
+
+CONTEXTO
+O sistema já possui o Data Lake operacional (V4) com:
+- Detecção automática por conteúdo: HP_DAILY, CHECKIN_DAILY, CHECKOUT_DAILY
+- Regra REAL vs FORECAST por as_of_date (HP evolutivo)
+- occupancy_latest com precedência REAL > FORECAST
+- Snapshots deduplicados por (target_date, generated_at)
+- Estatística EWMA de bias por dia da semana (weekday_bias_stats)
+- Distribuição horária para turnos (hourly_distribution_stats)
+Fluxo diário suportado: HP mês corrente + HP próximo mês + CHECKIN do dia + CHECKOUT do dia
+
+OBJETIVO DA FASE 2
+Criar o conceito formal de “Forecast Run” (rodada de previsão) e “Baseline de Planejamento”:
+- Toda SEXTA-FEIRA (manhã): gerar um Forecast Run “BASELINE” para a semana seguinte (Seg–Dom).
+- A partir do Baseline, gerar uma “visão congelada” que será referência oficial para:
+  (a) emissão de convocações,
+  (b) comparação com o que foi atualizado diariamente (Forecast atualizado),
+  (c) cálculo de desvios e auditoria do processo de planejamento.
+- Todos os dias (Seg–Dom): gerar Forecast Runs “ATUALIZAÇÃO DIÁRIA” (não congelados) para sugerir ajustes operacionais, sem apagar o baseline.
+
+IMPORTANTE
+- O baseline deve ser IMUTÁVEL após “fechar” (lock). Pode haver “versões” se o gestor decidir re-baselinear, mas isso deve ser um novo run, não edição do anterior.
+- O sistema deve sempre conseguir responder: “o que planejamos na sexta” vs “o que o sistema recomenda hoje” vs “o que realmente aconteceu”.
+
+REQUISITOS FUNCIONAIS (BACKEND)
+1) Entidade FORECAST_RUN
+Criar tabelas (ou models) para representar execuções de previsão:
+
+A) forecast_run
+- id (uuid ou serial)
+- run_type: BASELINE | DAILY_UPDATE | MANUAL
+- run_datetime (timestamp)
+- run_date (date)  [data da execução]
+- horizon_start (date)  [segunda da semana alvo]
+- horizon_end (date)    [domingo da semana alvo]
+- as_of_datetime (timestamp)  [data/hora de corte usada para buscar forecasts do HP]
+- created_by (user opcional)
+- method_version (string) [ex: "forecast_run_v1"]
+- bias_method (ex: "EWMA")
+- bias_params_json (ex: {"alpha":0.15, "safety_pp": {...}})
+- is_locked (bool) [true apenas para baseline após confirmação]
+- locked_at (timestamp nullable)
+- notes (text nullable)
+
+B) forecast_run_day
+- id
+- forecast_run_id (FK)
+- target_date (date)
+- weekday_pt (SEG..DOM)
+- occ_raw_pct (float)   [FORECAST do HP mais recente até as_of_datetime]
+- bias_pp_used (float)  [weekday_bias_stats vigente no run]
+- safety_pp_used (float) [configurável por weekday, default 0]
+- occ_adj_pct (float)   [clamp(occ_raw + bias + safety)]
+- source_hp_upload_id (FK report_upload)  [referência do HP usado como fonte do occ_raw]
+- created_at
+
+Observação: occ_raw deve vir do “melhor forecast disponível” com base no as_of_datetime do run.
+Critério: para cada target_date, usar o snapshot FORECAST mais recente cujo generated_at <= as_of_datetime.
+Guardar o source_hp_upload_id/snapshot de referência para auditoria.
+
+2) Serviços
+Implementar serviços:
+- ForecastRunService.create_baseline(run_date, horizon_start, horizon_end, as_of_datetime, safety_pp_map, alpha_override?)
+- ForecastRunService.create_daily_update(run_date, horizon_start, horizon_end, as_of_datetime)
+- ForecastRunService.lock_run(run_id)  => apenas se run_type == BASELINE
+- ForecastRunService.get_active_baseline(week_start) => retorna último baseline locked para a semana
+- ForecastRunService.compare_runs(run_id_a, run_id_b) => diffs por dia (raw, adj)
+- ForecastRunService.compute_forecast_error(run_id_baseline, real_source=occupancy_latest) =>
+    Para cada target_date já passado, comparar:
+      error_pp = real - occ_raw_pct (ou real - occ_adj_pct; guardar ambos se útil)
+    Armazenar em deviation_daily com metric_name apropriado, incluindo run_id.
+
+3) Integração com estatísticas
+- Ao gerar um ForecastRun, registrar qual bias_pp foi usado (snapshot do bias por weekday).
+- A atualização do bias (EWMA) continua como está; porém:
+  - A lógica de atualização deve conseguir usar o “forecast do baseline” como referência de previsão “planejada” para medir erro.
+  - Manter no deviation_daily: metric_name="occ_forecast_baseline_raw" e/ou "occ_forecast_baseline_adj" para separar análises.
+
+4) API Endpoints (FastAPI)
+Criar endpoints:
+- POST /api/forecast-runs/baseline
+  Body: { week_start (date) } OU { run_date } (o backend calcula a próxima semana Seg–Dom), plus { safety_pp_by_weekday optional, alpha optional }
+  Retorna: run_id e resumo dos 7 dias
+
+- POST /api/forecast-runs/{run_id}/lock
+  -> trava baseline
+
+- POST /api/forecast-runs/daily-update
+  Body: { target_week_start } (ou auto = semana do baseline ativo)
+  -> gera run daily_update
+
+- GET /api/forecast-runs?week_start=YYYY-MM-DD
+  -> lista runs (baseline e updates)
+
+- GET /api/forecast-runs/{run_id}
+  -> detalhes (forecast_run_day)
+
+- GET /api/forecast-runs/{baseline_id}/comparison/latest
+  -> compara baseline locked vs último daily_update (ou vs occupancy_latest forecast atual)
+
+- GET /api/forecast-runs/{baseline_id}/errors
+  -> retorna erros disponíveis (dias passados) e status “quantos dias já têm real”
+
+5) Regras e validações
+- Somente 1 baseline locked “ativo” por week_start (se criar outro baseline para mesma semana, deve exigir confirmação e marcar o anterior como superseded via campo optional).
+- Lock impede alterações e impede reprocessamento de valores do run.
+- Todos os cálculos devem ser reproduzíveis: dado run_id, conseguir mostrar exatamente quais uploads/valores alimentaram o run.
+
+REQUISITOS FUNCIONAIS (FRONTEND)
+Criar uma nova seção/tela “Planejamento” ou incorporar em “Intelligence”/“Schedule” com 3 painéis:
+
+A) Painel “Baseline (Sexta)”
+- Botão: “Gerar Baseline da Próxima Semana”
+- Mostra tabela Seg–Dom: occ_raw, bias_pp, safety_pp, occ_adj
+- Botão: “Travar Baseline”
+- Após travar: mostrar “Baseline Oficial” + timestamp
+
+B) Painel “Atualização Diária”
+- Botão: “Gerar Atualização de Hoje”
+- Mostrar comparação baseline vs atualização:
+  - delta_raw (pp), delta_adj (pp)
+  - destaque visual para dias com maior mudança
+
+C) Painel “Planejado x Real”
+- Para dias já passados: mostrar baseline (raw/adj) vs real (occupancy_latest real)
+- Mostrar erro em pp por dia e média da semana
+- Indicar “ainda não há real suficiente” quando o dia não estiver consolidado.
+
+Além disso, incluir no painel:
+- Campo(s) de “safety_pp por weekday” editáveis (com defaults), aplicados na geração do baseline.
+- Mostrar versão do método e alpha do EWMA usados.
+
+REQUISITOS DE DADOS / MIGRAÇÃO
+- Criar migrações no Postgres (alembic ou mecanismo já existente):
+  - forecast_run
+  - forecast_run_day
+  - (opcional) baseline_status / superseded_by_run_id
+- Indexes:
+  - forecast_run(week_start/horizon_start, run_type, is_locked)
+  - forecast_run_day(forecast_run_id, target_date)
+- Garantir integridade com report_upload (source_hp_upload_id)
+
+CRITÉRIOS DE ACEITAÇÃO (TESTES)
+1) Ao gerar baseline:
+- O sistema cria 7 linhas (Seg–Dom) com occ_raw proveniente de snapshots <= as_of_datetime
+- Aplica bias_pp correto por weekday e calcula occ_adj
+- Retorna run_id e resumo
+
+2) Ao travar baseline:
+- is_locked=true; locked_at preenchido
+- Requisições de alteração devem falhar (ou não existir)
+
+3) Atualização diária:
+- Gera novo run DAILY_UPDATE para mesma semana
+- Endpoint de comparação mostra diffs baseline vs update
+
+4) Planejado x Real:
+- Para target_date < hoje: quando occupancy_latest tiver real, calcular erro e expor via API
+- Frontend exibe corretamente
+
+5) Auditoria:
+- forecast_run_day guarda source_hp_upload_id e parâmetros usados
+- Reprocessar upload do HP não altera runs existentes
+
+NOTAS DE IMPLEMENTAÇÃO
+- Reaproveitar ao máximo o Data Lake V4 e services existentes.
+- A fase 2 NÃO precisa ainda gerar escala de camareiras (isso será fase 3). Aqui o foco é a governança do planejamento: baseline + updates + comparativos.
+- Porém, deixar o design pronto para que fase 3 consuma occ_adj do baseline para dimensionamento e escalas.
+
+ENTREGA
+Implementar backend + migrations + endpoints + UI do painel de Planejamento com baseline/update/comparativo. Incluir README breve de como operar semanalmente.
+
+FIM DO PROMPT 2

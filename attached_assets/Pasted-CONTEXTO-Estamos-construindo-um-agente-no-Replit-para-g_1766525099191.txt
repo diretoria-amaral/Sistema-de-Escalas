@@ -1,0 +1,91 @@
+CONTEXTO
+Estamos construindo um agente no Replit para gerir base de dados (Data Lake) e gerar escalas de convocação. A base V4 já está implementada: ingestão de HP diário (mês corrente + próximo mês), CHECKIN diário e CHECKOUT diário, detecção por conteúdo, regra REAL vs FORECAST por as_of_date, precedência REAL>FORECAST, deduplicação de snapshots, EWMA por dia da semana e distribuição horária.
+
+OBJETIVO DO PROMPT 6
+Refatorar/ajustar o sistema para suportar MULTI-SETOR de forma consistente, com:
+1) Cadastro de ATIVIDADES obrigatoriamente vinculadas a um SETOR.
+2) Separar REGRAS em DUAS ABAS/MÓDULOS:
+   A) Regras Trabalhistas (globais, válidas para todos os setores).
+   B) Regras Operacionais por Setor (parâmetros e indicadores específicos de cada setor).
+3) UI deve ter um botão/aba por setor cadastrado para editar as regras operacionais daquele setor.
+4) Garantir integridade no banco (constraints), APIs e telas.
+
+REQUISITOS FUNCIONAIS
+
+(1) ATIVIDADES VINCULADAS A SETOR (obrigatório)
+- Toda atividade deve ter sector_id obrigatório (NOT NULL).
+- Se existir tabela/modelo “governance_activity” ou similar já usada como “atividade genérica”, manter por compatibilidade, mas:
+  - Tornar o vínculo com setor obrigatório (NOT NULL).
+  - Ajustar schemas/rotas para sempre exigir sector_id no create/update.
+- Ajustar a tela de atividades para:
+  - Exigir seleção de setor (sem setor, não salva).
+  - Filtrar listagem por setor (dropdown “Todos os setores” + filtro).
+- Ajustar endpoints:
+  - GET /activities?sector_id=...
+  - POST /activities (sector_id obrigatório)
+  - PUT /activities/{id} (sector_id obrigatório)
+  - Garantir validações e mensagens de erro claras.
+
+(2) REGRAS TRABALHISTAS (GLOBAIS)
+- Criar/confirmar um módulo “Regras Trabalhistas” (global).
+- Deve ficar em uma aba/tela própria: “Regras Trabalhistas”.
+- Conteúdo: regras de contrato intermitente e validações gerais (antecedência mínima, horas máximas, descanso, intervalo etc.), sem depender de setor.
+- Backend:
+  - Um único registro ativo (singleton), ou versionado, mas sempre com “current”.
+  - Endpoints simples: GET/PUT.
+- Frontend:
+  - Tela com formulário e botão salvar.
+  - Exibir última atualização e versionamento/metadados.
+
+(3) REGRAS OPERACIONAIS POR SETOR
+- Criar um módulo/tabela setorial: sector_operational_rules (ou equivalente).
+Campos sugeridos (mínimo):
+  - id
+  - sector_id (FK, UNIQUE por setor para “current”)
+  - params_json (JSON com parâmetros operacionais do setor)
+  - updated_at, updated_by, version/method_version
+- params_json deve contemplar (no mínimo para governança, mas genérico):
+  - metas e percentuais (meta_aproveitamento_%)
+  - buffers (buffer_%)
+  - tempos médios (ex.: tempo_vago_sujo_min, tempo_estadia_min) — quando aplicável
+  - janelas/turnos/templates (quando aplicável)
+  - flags e preferências (ex.: considerar feriado, política de early/late etc.)
+- Backend:
+  - Endpoints:
+    - GET /sectors/{id}/operational-rules
+    - PUT /sectors/{id}/operational-rules
+  - Se não existir regra para um setor, criar automaticamente com defaults (seed) ao cadastrar setor.
+- Frontend:
+  - Criar tela “Regras Operacionais” com:
+    - Lista de botões/tabs com todos os setores cadastrados.
+    - Ao selecionar um setor, carregar e editar as regras daquele setor.
+    - Botão “Salvar” e feedback.
+  - A tela deve deixar claro: “Estas regras são específicas do setor selecionado”.
+
+(4) AJUSTES DE INTEGRIDADE / MIGRAÇÕES
+- Criar migração(s) para:
+  - Tornar activity.sector_id NOT NULL.
+  - Criar tabela sector_operational_rules com FK e UNIQUE(sector_id).
+  - Garantir índices para filtros (sector_id).
+- Se houver dados legados com sector_id nulo:
+  - Criar script de migração para atribuir um setor padrão (ex.: “Governança”) OU bloquear e pedir correção manual numa tela de “pendências”.
+  - Preferência: criar setor “Governança” e atribuir.
+
+(5) NAVEGAÇÃO / MENU
+- Ajustar navegação para mostrar claramente:
+  - “Regras Trabalhistas”
+  - “Regras Operacionais”
+- Manter páginas existentes (ex.: GovernanceRulesPage) mas marcar como deprecated e redirecionar para “Regras Operacionais” já filtrando Governança, OU refatorar para reutilizar o componente genérico.
+
+CRITÉRIOS DE ACEITE
+- Não é possível criar/editar atividade sem setor.
+- Existe tela “Regras Trabalhistas” global, salva e carrega.
+- Existe tela “Regras Operacionais” com botões por setor; cada setor salva/carrega seu conjunto de parâmetros.
+- Banco com constraints e migrações aplicadas.
+- APIs funcionando com validações.
+- UI com mensagens de erro e sucesso.
+
+IMPORTANTE
+- Não quebrar o Data Lake V4 já aprovado.
+- Não alterar a lógica REAL vs FORECAST e estatísticas, apenas integrar a nova estrutura multi-setor.
+- Implementar com código limpo e organizado; atualizar README se necessário.

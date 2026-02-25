@@ -1,0 +1,51 @@
+OBJETIVO
+Criar a infraestrutura de regras hierarquizadas (trabalhistas, operacionais e de cálculo) por setor, e a infraestrutura de rastreabilidade (memória de cálculo) por execução.
+
+REQUISITOS
+1) Regras devem ser modeladas como PERGUNTA/RESPOSTA (Question/Answer), com:
+- id
+- setor_id (FK)
+- tipo_regra (LABOR | OPERATIONAL | CALCULATION)
+- nivel_rigidez (MANDATORY | DESIRABLE | FLEXIBLE)
+- prioridade (int; 1 = mais importante)
+- codigo_regra (string única por setor e tipo, ex: "LAB-001")
+- pergunta (texto)
+- resposta (texto)
+- regra_ativa (bool)
+- validade_inicio (date) e validade_fim (date, opcional)
+- metadados_json (jsonb) para parâmetros estruturados opcionais
+- created_at/updated_at
+
+2) Deve existir ordenação total por setor + tipo_regra + nivel_rigidez + prioridade.
+Regra de precedência:
+- LABOR sempre tem precedência sobre OPERATIONAL e CALCULATION no processo decisório.
+- Dentro de cada tipo: MANDATORY primeiro, depois DESIRABLE, depois FLEXIBLE (cada bloco por prioridade).
+
+3) CRUD completo + reorder:
+- criar, editar, excluir (soft delete preferível), ativar/desativar
+- alterar ordem (reorder) por drag/drop no front → endpoint específico no back
+- duplicar regra (clone) opcional
+
+4) Memória de cálculo / execução:
+Criar tabela "agent_run" para registrar cada execução do agente (forecast/demand/schedule/convocations) com:
+- id, setor_id, week_start, run_type
+- status (RUNNING|SUCCESS|FAILED)
+- inputs_snapshot (jsonb) — referência a ids/intervalos e parâmetros usados (sem dados fake)
+- outputs_summary (jsonb) — resumo do resultado
+- created_at, finished_at
+
+Criar tabela "agent_trace_step" para rastreio:
+- id, run_id (FK agent_run)
+- step_order (int)
+- step_key (ex: "DEMAND_BASE", "APPLY_VARIANCE", "HEADCOUNT", "ASSIGNMENT", "AGENDA")
+- description (text)
+- applied_rules (jsonb) → lista de codigo_regra na ordem aplicada
+- calculations (jsonb) → números, fórmulas, agregações
+- constraints_violated (jsonb) → quais regras não cumpriu
+- created_at
+
+IMPLEMENTAÇÃO
+- Backend FastAPI + SQLAlchemy/SQLModel conforme padrão de pastas.
+- Criar MODELS em app/models, SCHEMAS em app/schemas.
+- Criar migrations com Alembic (não editar migrations antigas).
+- Não criar mock/fake data.

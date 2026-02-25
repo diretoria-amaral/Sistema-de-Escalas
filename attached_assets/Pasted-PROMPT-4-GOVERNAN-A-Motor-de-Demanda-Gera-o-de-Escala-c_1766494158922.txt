@@ -1,0 +1,161 @@
+PROMPT 4 — GOVERNANÇA: Motor de Demanda + Geração de Escala com Forecast Run/Baseline
+
+CONTEXTO
+Você já implementou o Data Lake V4 com:
+- Detecção e parsing automáticos: HP_DAILY + CHECKIN_DAILY + CHECKOUT_DAILY (por conteúdo).
+- Regra REAL vs FORECAST por as_of_date (HP).
+- occupancy_snapshots + occupancy_latest (precedência REAL > FORECAST).
+- Estatísticas EWMA por dia da semana (bias_pp) e distribuição horária (hourly_distribution_stats).
+- Conceito de Forecast Run / Baseline de Planejamento.
+
+AGORA A “PRÓXIMA FASE”
+Implementar a camada de NEGÓCIO para o setor GOVERNANÇA (camareiras), usando o Forecast Run/Baseline:
+1) Converter projeção ajustada de ocupação (occ_adj) em DEMANDA OPERACIONAL:
+   - quartos_vagos_sujos (limpeza de checkout)
+   - quartos_estada (limpeza de estadia / stayover)
+2) Gerar ESCALA COMPLETA por dia (Seg–Dom) com:
+   - quantidade de camareiras
+   - horários de entrada escalonados
+   - intervalo de refeição de 1h escalonado
+   - horário de saída
+3) Persistir tudo no banco, com rastreabilidade e possibilidade de override humano.
+4) A escala deve poder ser: (A) gerada na sexta como baseline e (B) reavaliada diariamente (recomendação de ajustes).
+
+OBJETIVOS DE ENTREGA (MVP DO SETOR GOVERNANÇA)
+A) MODELO DE DEMANDA (housekeeping demand)
+Criar um “HousekeepingDemandService” (ou equivalente) que, dado um forecast_run_id e um week_start (segunda-feira), gere uma tabela por dia:
+- date
+- weekday
+- occ_raw_pct, occ_adj_pct
+- rooms_available (parâmetro do hotel ou inferido se já existir)
+- rooms_occupied_est = round(rooms_available * occ_adj_pct / 100)
+- departures_est (proxy de checkouts do dia)
+- stayovers_est = max(0, rooms_occupied_est - departures_est)
+- quartos_vagos_sujos = departures_est
+- quartos_estada = stayovers_est
+- minutos_produtivos = quartos_vagos_sujos*tempo_vago_sujo + quartos_estada*tempo_estada
+- utilization_target (meta_aproveitamento_horas do setor)
+- horas_totais = minutos_produtivos/60 / utilization_target
+- buffer_% aplicado (se existir na regra)
+- headcount_requerido = ceil(horas_totais / horas_turno_padrao)
+
+IMPORTANTE (como estimar departures_est):
+- Como NÃO temos “arrivals/departures” futuros do PMS, usar um PROXY estatístico:
+  1) Calcular e manter um “turnover_rate” por dia da semana com base no histórico real:
+     turnover_rate(weekday) = média de (checkouts_reais_do_dia / rooms_occupied_real_do_dia).
+     Onde:
+     - checkouts_reais_do_dia vem dos relatórios CHECKOUT_DAILY (contagem do dia).
+     - rooms_occupied_real_do_dia vem do HP (ocupação REAL do dia) * rooms_available.
+  2) departures_est = round(rooms_occupied_est * turnover_rate(weekday)).
+  3) Se não houver amostra suficiente (n pequeno), usar fallback:
+     - turnover_rate_default = 0.20 (configurável em GovernanceRules/sector_parameters) OU
+     - usar o turnover_rate geral (todos os dias) como fallback.
+
+Você deve persistir turnover_rate_stats em tabela própria ou reaproveitar tabela genérica de stats (recomendado criar):
+- turnover_rate_stats(weekday_pt, rate, n, std, last_updated_at, method, params_json)
+
+B) GOVERNANÇA RULES / PARÂMETROS (já existentes)
+Usar GovernanceRules (ou sector_parameters) como fonte para:
+- tempo_padrao_vago_sujo (min) — ex.: 25
+- tempo_padrao_estada (min) — ex.: 10
+- meta_aproveitamento_horas (ex.: 0.80)
+- horas_turno_padrao (ex.: 8.0)
+- buffer_percentual (ex.: 0.10)
+- regras de almoço (duração 1h, janela permitida)
+- janelas de operação (ex.: início 08:00, pico 09–13, fim 17:00) — parametrizável
+
+Criar/confirmar na UI “Weekly Parameters / Governance Rules” um painel de parâmetros do setor GOVERNANÇA que permita:
+- alterar utilization_target, tempos, buffer, horas_turno_padrao,
+- e salvar versão por semana (ou “atual”).
+
+C) GERAÇÃO DE ESCALA (Schedule Generator 2.0)
+Atualizar ou criar um “GovernanceScheduleGenerator” que:
+Entrada:
+- forecast_run_id (baseline)
+- week_start (segunda)
+- governance_rules_id (ou pegar rules atuais)
+- lista de funcionários ativos (employee where sector=Governança & role=Camareira)
+- hourly_distribution_stats(metric='checkout', weekday, hour 0..11) para distribuir entrada/lotação ao longo da manhã
+
+Processo:
+1) Para cada dia da semana:
+   - obter a demanda (quartos_vagos_sujos, quartos_estada, headcount_requerido, horas_totais)
+2) Definir “templates de turno” (configuráveis, com fallback padrão):
+   - Exemplo (fallback): 08:00–16:00, 09:00–17:00, 10:00–18:00
+   - Todos com almoço 1h escalonado (janela 11:00–14:00)
+3) Distribuir headcount entre templates usando a curva horária de CHECKOUT do weekday:
+   - ideais: mais pessoas iniciando antes/na janela de maior checkout.
+   - Regra simples inicial (aceita):
+     - calcular “pico” do checkout (hora com maior %)
+     - se pico <= 10: priorizar 08:00 e 09:00
+     - se pico >= 11: aumentar 09:00 e 10:00
+   - Persistir a lógica e permitir override manual depois.
+4) Alocar funcionários:
+   - Respeitar restrições do employee.constraints_json (se houver).
+   - Balancear horas semanais entre funcionários (equidade).
+   - Rotacionar para reduzir padrão fixo (evitar convocações sempre iguais).
+   - Garantir cobertura para o volume do dia.
+5) Persistir:
+   - weekly_schedule + daily_shift
+   - linkar a weekly_schedule ao forecast_run (baseline) e armazenar method_version.
+6) “Ajuste diário recomendado”:
+   - criar endpoint que, ao receber HP do dia novo, compare baseline vs projeção mais recente e sugira:
+     - +X / -X camareiras no dia D
+     - ou mudança de distribuição de turnos
+   - Não precisa auto-aplicar: apenas recomendar e registrar.
+
+D) NOVAS TABELAS / AJUSTES (se necessário)
+Se já existir algo parecido, reaproveitar. Se não:
+- turnover_rate_stats
+- housekeeping_demand_day (ou view gerada + persistida por run):
+  (forecast_run_id, date, occ_adj_pct, rooms_occupied_est, departures_est, stayovers_est, quartos_vagos_sujos, quartos_estada, minutos_produtivos, horas_totais, headcount)
+- schedule_run (opcional, mas recomendado):
+  (id, forecast_run_id, sector_id, week_start, created_at, status, notes, method_version)
+
+E) ENDPOINTS (API)
+Criar endpoints claros:
+1) POST /api/governance/demand/compute?forecast_run_id=...&week_start=...
+   - retorna demanda por dia e grava (idempotente)
+2) POST /api/governance/schedule/generate?forecast_run_id=...&week_start=...
+   - gera weekly_schedule + daily_shifts e retorna o resultado
+3) GET /api/governance/schedule?week_start=... (ou /api/schedules?sector=governance&week_start=...)
+4) GET /api/governance/recommendations?forecast_run_id=...&week_start=...&as_of=YYYY-MM-DD
+   - sugere ajustes comparando baseline vs último forecast
+
+F) FRONTEND (UI)
+Aprimorar/implementar telas:
+1) SchedulePage (Governança)
+   - seletor de Forecast Run (baseline)
+   - botão “Calcular Demanda”
+   - exibir tabela por dia: occ_raw, occ_adj, vago_sujo, estada, horas_totais, headcount
+   - botão “Gerar Escala”
+   - exibir escala por dia com funcionários e horários
+   - permitir override manual:
+     - headcount do dia
+     - distribuição de templates
+     - ajustes de horário por funcionário
+   - salvar e registrar auditoria do override
+2) GovernanceRulesPage / WeeklyParametersPage
+   - painel completo de parâmetros governança por semana (ou vigente):
+     tempo_vago_sujo, tempo_estada, meta_aproveitamento, buffer, horas_turno, templates_turno, janela_almoço
+3) IntelligencePage/ReportsPage (já existe)
+   - opcional: mostrar que “último HP diário processado” e “último checkin/checkout processado” para confiança
+
+CRITÉRIOS DE ACEITAÇÃO (TESTES)
+- Dado um forecast_run baseline para uma semana, o sistema gera:
+  (1) demanda diária coerente e persistida
+  (2) escala diária com horários escalonados e almoço 1h
+  (3) persistência no banco com rastreabilidade (forecast_run_id linkado)
+- O turnover_rate_stats é calculado automaticamente com base no histórico real já existente
+- Quando não houver histórico suficiente, o fallback funciona e fica explícito no retorno/log
+- UI permite gerar demanda → gerar escala → ver escala → salvar override
+
+REGRAS IMPORTANTES
+- Não quebrar o Data Lake V4 que já está aprovado.
+- Versionar mudanças (method_version / parser_version).
+- Manter auditoria (quem gerou, quando, com quais parâmetros).
+- Código limpo: services separados, schemas pydantic, rotas organizadas.
+
+ENTREGA FINAL
+- Implementar tudo acima e garantir que o app rode ponta-a-ponta para Governança:
+  upload → baseline forecast run → demanda → escala → persistência → visualização.

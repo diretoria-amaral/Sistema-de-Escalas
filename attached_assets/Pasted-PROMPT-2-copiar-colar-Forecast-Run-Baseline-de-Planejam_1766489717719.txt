@@ -1,0 +1,404 @@
+PROMPT 2 (copiar/colar) — Forecast Run + Baseline de Planejamento (sexta) + Ajustes Diários
+
+CONTEXTO DO PROJETO (NÃO RESUMIR / NÃO OMITIR):
+Estamos construindo um agente no Replit para gestão de mão de obra intermitente por setor. A base “V4” já existe e está aprovada, com Data Lake e ingestão diária de relatórios do Desbravador:
+
+HP diário do mês corrente e do próximo mês (PDF) com regra REAL vs FORECAST por as_of_date derivado de generated_at.
+
+CHECKIN diário e CHECKOUT diário (PDF) detectados por conteúdo e extraídos para estatística horária.
+
+Tabelas/rotinas de occupancy snapshots, occupancy_latest com precedência REAL > FORECAST, EWMA por dia da semana (bias_pp) e distribuição horária.
+
+Agora precisamos implementar o conceito operacional:
+“Forecast Run / Baseline de Planejamento”
+
+Toda sexta-feira (planejamento), geramos uma Baseline para a semana seguinte (segunda→domingo), usando o que havia de reservas válidas até aquela sexta (FORECAST “as-of sexta”) + ajuste estatístico (bias_pp) + safety_pp.
+
+Nos demais dias, o sistema deve gerar Ajustes Diários (Daily Runs) comparando a visão do dia com a Baseline, recomendando alterações (ex.: aumentar/reduzir camareiras, mudar janelas de entrada/saída, etc.) — mantendo rastreabilidade do que foi “baseline” vs “ajustado”.
+
+OBJETIVO DO PROMPT 2:
+Implementar, no backend e frontend, um módulo completo de Forecast Runs com:
+
+criação de Baseline Run (uma por semana);
+
+criação de Daily Adjustment Run (diário);
+
+comparação automática Baseline vs Daily (deltas por dia da semana);
+
+endpoints e UI para visualizar baseline, ajustes e histórico;
+
+amarração do Forecast Run com geração de escala (no Prompt 3 vamos aprofundar a escala, mas aqui já deve existir o “gancho”: run → pode gerar/atualizar um plano de escala).
+
+A) BACKEND — Modelos e Banco
+
+Criar/ajustar modelos (SQLAlchemy) para suportar claramente:
+
+forecast_runs com campos mínimos:
+
+id
+
+run_type enum: BASELINE, DAILY_ADJUSTMENT
+
+run_date (data da execução)
+
+week_start (segunda da semana-alvo) e week_end (domingo)
+
+baseline_run_id (nullable; preenchido quando run_type=DAILY_ADJUSTMENT)
+
+source_snapshot_generated_at (timestamp do HP usado como base principal do run — para auditoria)
+
+occ_raw_json (dict por dia: ocupação raw)
+
+occ_adj_json (dict por dia: ocupação ajustada)
+
+bias_applied_json (dict por weekday: bias_pp usado)
+
+safety_applied_json (dict por weekday: safety_pp usado)
+
+notes, created_at
+
+Regra de unicidade lógica:
+
+Só pode existir uma Baseline ativa por week_start. Se criar outra, ou:
+
+(preferível) marcar a anterior como is_active=False e a nova como is_active=True, mantendo histórico; OU
+
+bloquear e exigir confirmação (mas sem interações manuais no prompt; implemente o modelo is_active).
+
+Criar tabela opcional (ou view gerada em runtime) para comparação:
+
+forecast_run_comparisons (opcional) OU gerar on-the-fly:
+
+deltas por dia: delta_occ_pp = occ_adj_daily - occ_adj_baseline
+
+métricas agregadas: média delta, max delta, etc.
+
+B) BACKEND — Serviços (lógica)
+
+Implementar serviço ForecastRunService (ou adaptar o existente) com estas rotinas:
+
+3.1) Criar Baseline (sexta):
+
+Entrada: week_start (segunda da semana seguinte) OU run_date (sexta) e o sistema calcula week_start.
+
+Determinar qual HP/FORECAST usar:
+
+Selecionar, para cada target_date da semana-alvo, o melhor FORECAST disponível com generated_at <= run_date 23:59.
+
+Calcular:
+
+occ_raw(d) (do HP as-of sexta)
+
+occ_adj(d) = clamp(occ_raw + bias_pp(weekday) + safety_pp(weekday), 0..100)
+
+Salvar ForecastRun(BASELINE) e marcar is_active=True, desativando baseline anterior da mesma week_start.
+
+3.2) Criar Daily Adjustment (qualquer dia):
+
+Entrada: run_date (hoje) + week_start (da semana corrente ou próxima, conforme UI).
+
+Encontrar Baseline ativa daquela week_start.
+
+Obter occ_raw(d) e occ_adj(d) com base nos FORECASTS mais recentes as-of run_date.
+
+Calcular deltas comparando com baseline:
+
+delta_raw_pp(d), delta_adj_pp(d)
+
+Salvar ForecastRun(DAILY_ADJUSTMENT) apontando para baseline_run_id.
+
+3.3) Função para “resumo executivo do run”
+
+Retornar:
+
+tabela com dias (SEG..DOM), baseline_adj, daily_adj, delta_pp
+
+flags: “mudança relevante” se abs(delta_pp) > limiar configurável (ex.: 2pp)
+
+recomendação textual simples: “rever escala de governança na terça/quarta” etc. (sem inventar número de camareiras ainda — isso vem no Prompt 3).
+
+C) BACKEND — Endpoints (API)
+
+Criar endpoints REST no módulo de governança:
+
+POST /governance/forecast-runs/baseline
+
+body: { "run_date": "YYYY-MM-DD", "week_start": "YYYY-MM-DD", "safety_pp_by_weekday": {...} }
+
+response: ForecastRun baseline completo
+
+POST /governance/forecast-runs/daily
+
+body: { "run_date": "YYYY-MM-DD", "week_start": "YYYY-MM-DD" }
+
+response: ForecastRun daily + comparison vs baseline (no payload)
+
+GET /governance/forecast-runs?week_start=YYYY-MM-DD
+
+lista baseline + daily runs
+
+GET /governance/forecast-runs/{id}
+
+detalhes
+
+GET /governance/forecast-runs/{id}/comparison
+
+se preferir separar
+
+(Se já houver rotas similares, reaproveite e apenas ajuste para esse contrato.)
+
+D) FRONTEND — UI (Schedule/Intelligence)
+
+Atualizar o frontend com foco no painel de planejamento:
+
+5.1) Página “Schedule” (ou nova subaba “Planejamento”)
+
+Seletor de week_start
+
+Botão “Gerar/Atualizar BASELINE (sexta)”
+
+Botão “Gerar AJUSTE do dia”
+
+Card “Baseline Ativa”
+
+mostra data do run_date, snapshot_generated_at, e tabela SEG..DOM occ_raw, occ_adj
+
+Card “Ajustes Diários”
+
+lista de daily runs com data + delta médio + botão “ver detalhes”
+
+Tabela comparativa:
+
+SEG..DOM: baseline_adj, daily_adj, delta_pp
+
+destacar delta acima de limiar
+
+5.2) Logs/Auditoria
+
+Link para ver qual generated_at foi usado (importantíssimo para confiança)
+
+E) CRITÉRIOS DE ACEITAÇÃO (PROMPT 2)
+
+✅ Conseguir gerar Baseline para uma week_start e mantê-la ativa (com histórico)
+
+✅ Conseguir gerar Daily Adjustment e comparar com Baseline
+
+✅ UI mostra claramente baseline vs ajuste por dia da semana
+
+✅ Tudo auditável (run_date, week_start, snapshot_generated_at)
+
+✅ Não quebrar ingestão V4 nem estatísticas existentes
+
+NÃO FAZER (por enquanto):
+
+Não gerar escala de camareiras ainda (isso será o PROMPT 3), apenas deixar o “gancho” para acoplar run→escala.
+
+PROMPT 3 (copiar/colar) — Escala Governança completa (camareiras) a partir do Forecast Run + parâmetros + distribuição horária + validações
+
+CONTEXTO:
+O sistema já tem Data Lake V4 e agora tem Forecast Runs (Baseline/Daily). Precisamos transformar a projeção ajustada (occ_adj) e os dados operacionais em uma escala semanal de camareiras com:
+
+quantidade total por dia
+
+distribuição de horário de entrada, intervalo de 1h e saída por colaboradora
+
+uso de parâmetros editáveis por setor (meta de aproveitamento %, tempos médios, buffer, templates)
+
+apoio da distribuição horária de checkouts/checkins para definir janelas e escalonar entradas
+
+validações legais básicas (convocação 72h, variação de padrão, etc.) usando o módulo legal_rules já existente
+
+OBJETIVO DO PROMPT 3:
+Implementar o módulo de Geração de Escala Governança acoplado ao Forecast Run (Baseline ou Daily), produzindo um Schedule Plan versionado e auditável, com possibilidade de:
+
+gerar escala a partir da Baseline
+
+gerar “escala ajustada” a partir de um Daily Run (mantendo referência ao baseline)
+
+validar e emitir convocações (prévia) respeitando 72h
+
+A) Parâmetros Operacionais por Setor (UI + DB)
+
+Criar/confirmar entidade de parâmetros (por semana e por setor):
+
+sector_parameters (ou equivalente existente) com:
+
+tempo_vago_sujo_min (ex.: 25)
+
+tempo_estadia_min (ex.: 10)
+
+meta_aproveitamento (0–1) (ex.: 0.80)
+
+buffer_percent (ex.: 0.10)
+
+shift_templates (JSON): ex. turnos possíveis com janelas de start e end
+
+lunch_duration_min (fixo 60)
+
+lunch_window_rules (ex.: almoço entre 11–15, ou “após 4h de início”)
+
+daily_min_shift_hours / daily_max_shift_hours (para não padronizar sempre igual)
+
+safety_rooms_buffer (opcional)
+
+Atualizar a página “Weekly Parameters” para governança:
+
+formulário completo
+
+botão “Salvar parâmetros da semana”
+
+exibir “versão”/last_updated
+
+B) Transformar Occupancy + Operação em “Demanda de Limpeza” (por dia)
+
+Implementar função de demanda diária (MVP) com dois níveis:
+
+Nível 1 (quando só temos ocupação %):
+
+Estimar:
+
+occupied_rooms = round(rooms_total * occ_adj/100)
+
+stayovers ≈ occupied_rooms * fator_estadia (parâmetro configurável, default 0.70)
+
+departures ≈ occupied_rooms * (1 - fator_estadia)
+
+(Deixar esses fatores configuráveis e auditáveis)
+
+Nível 2 (quando tivermos arrivals/departures reais do PMS):
+
+Se existir tabela canônica de arrivals/departures por dia, usar valores reais.
+
+Converter demanda em tempo:
+
+minutes_prod = departures*tempo_vago_sujo + stayovers*tempo_estadia
+
+minutes_prod_buffered = minutes_prod * (1 + buffer_percent)
+
+hours_prod = minutes_prod_buffered / 60
+
+hours_total = hours_prod / meta_aproveitamento
+
+Headcount:
+
+camareiras_needed = ceil(hours_total / horas_por_camareira_por_dia)
+
+Onde horas_por_camareira_por_dia é derivado do template e limites (não fixo único).
+
+C) Distribuição de horários (usar checkout/checkin hourly distribution)
+
+Usar as matrizes horárias já calculadas no Data Lake:
+
+checkout_distribution(weekday, hour) (0–11)
+
+checkin_distribution(weekday, hour) (14–35, com +24)
+
+Regra objetiva para janelas:
+
+prioridade de limpeza do dia:
+
+pico de checkouts (pressão para “vago sujo”)
+
+necessidade de quartos prontos para pico de checkins (pressão para “pronto”)
+
+Implementar um “score por hora” para governança:
+
+pressure(hour) = w_out * checkout_pct(hour) + w_in * checkin_pct(hour)
+
+pesos configuráveis (default w_out=0.6, w_in=0.4)
+
+Gerar entradas escalonadas:
+
+distribuir camareiras em 2–4 “ondas” de entrada (ex.: 08:00, 09:00, 10:00, 11:00) conforme pressão
+
+almoço 1h posicionado para não colapsar cobertura no pico (staggered lunch)
+
+saída conforme carga prevista e janela de checkins
+
+D) Geração do Plano de Escala (baseline e ajuste)
+
+Criar entidade de “Schedule Plan” (já existe HousekeepingSchedulePlan) com:
+
+referência ao forecast_run_id
+
+plan_kind: BASELINE ou ADJUSTMENT
+
+baseline_plan_id quando for ajuste
+
+lista de DailyShiftAssignment com:
+
+employee_id (se já houver colaboradores cadastrados)
+
+start, lunch_start, lunch_end, end
+
+planned_hours
+
+Estratégia MVP de alocação de pessoas:
+
+se houver empregados suficientes cadastrados:
+
+rotacionar para evitar padrão fixo
+
+respeitar limites de horas
+
+alternar turnos quando aplicável
+
+se não houver:
+
+gerar plano “anônimo” por slots e depois permitir “atribuir colaboradoras”
+
+E) Validações legais e Convocação (prévia)
+
+Integrar ScheduleValidator:
+
+validar:
+
+convocação com 72h (considerar a data de emissão da convocação; baseline gerada sexta atende segunda)
+
+alertas de padrão e rotação
+
+horas semanais e diárias (configuráveis)
+
+Criar endpoint “Gerar Convocações (prévia)”:
+
+retorna lista por colaboradora:
+
+dias, horários, e status “ok / warning / erro”
+
+não precisa emitir mensagens; apenas registrar e exportar/visualizar
+
+F) UI Governança (página de escala)
+
+Atualizar “SchedulePage” (ou criar “Governança > Escala”):
+
+selecionar week_start
+
+selecionar “usar Baseline” ou “usar Daily Run”
+
+botão “Gerar Escala”
+
+exibir:
+
+resumo por dia: horas necessárias, camareiras, horários gerados
+
+tabela por colaboradora (ou por slot)
+
+validações (warnings/erros)
+
+botão “Salvar Plano” e “Marcar como Final”
+
+se for ajuste:
+
+mostrar delta vs baseline (camareiras, horas, mudanças)
+
+CRITÉRIOS DE ACEITAÇÃO (PROMPT 3)
+
+✅ Gerar escala semanal de camareiras a partir de um Forecast Run
+
+✅ Horários de entrada/intervalo/saída escalonados usando distribuição horária
+
+✅ Parâmetros editáveis por semana e por setor
+
+✅ Validações legais básicas rodando e exibidas na UI
+
+✅ Suporta baseline e ajuste (com vínculo e auditoria)

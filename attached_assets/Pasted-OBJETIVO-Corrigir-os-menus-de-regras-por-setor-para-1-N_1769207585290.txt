@@ -1,0 +1,113 @@
+OBJETIVO
+Corrigir os menus de regras por setor para:
+1) NÃO reaparecerem regras excluídas como “Inativas” por padrão;
+2) permitir exibição e edição do “Título da regra” (title) nos menus setoriais, que hoje mostram somente codigo_regra.
+
+CONTEXTO ATUAL (IMPORTANTE)
+Os menus setoriais carregam regras via:
+GET /api/rule-engine/rules/grouped/{sectorId}
+que usa schema RuleResponse (backend/app/schemas/rule_engine.py)
+e esse schema NÃO inclui “title”.
+Por isso a UI setorial sempre volta a mostrar codigo_regra após reload.
+
+========================
+A) EXIBIR TITLE NOS MENUS SETORIAIS (corrigir backend)
+========================
+
+1) BACKEND: incluir “title” na resposta do Rule Engine
+
+Arquivo:
+backend/app/schemas/rule_engine.py
+
+- No class RuleResponse, adicionar:
+  title: Optional[str] = None
+  is_global: Optional[bool] = False   (opcional, mas útil)
+
+Exemplo:
+class RuleResponse(BaseModel):
+    ...
+    codigo_regra: str
+    title: Optional[str] = None
+    pergunta: str
+    resposta: str
+    ...
+
+Config from_attributes já existe; a coluna SectorRule.title existe no model.
+
+2) BACKEND: garantir que o endpoint grouped retorna title
+Arquivo:
+backend/app/routers/rule_engine.py
+No get_grouped_rules(), já usa RuleResponse.model_validate(r)
+Então, após atualizar o schema, title deve aparecer automaticamente.
+
+3) FRONTEND: renderização
+No RulesEditorBase.tsx, já faz:
+rule.title || rule.codigo_regra
+Então, assim que o backend retornar title, a UI passa a exibir o título real.
+
+CRITÉRIO DE ACEITE A)
+- Editar “Título da regra” em menu setorial
+- Salvar
+- Recarregar a página
+- O título precisa continuar aparecendo (não voltar para código)
+
+========================
+B) NÃO MOSTRAR INATIVAS POR PADRÃO (e nunca mostrar excluídas)
+========================
+
+OBJETIVO
+Por padrão, listar apenas regras ativas.
+Somente mostrar inativas quando o usuário marcar “Mostrar inativas”.
+Regras excluídas (deleted_at preenchido) NUNCA devem aparecer.
+
+4) BACKEND: garantir que grouped nunca retorna deleted_at != null
+Arquivo:
+backend/app/services/rule_engine.py
+Na função fetch_rules(), já filtra deleted_at.is_(None).
+Manter isso como regra absoluta.
+
+5) BACKEND: ajustar default de active_only no endpoint grouped
+Arquivo:
+backend/app/routers/rule_engine.py
+
+Hoje:
+active_only: bool = Query(False, ...)
+
+Alterar para:
+active_only: bool = Query(True, description="Default: retornar apenas regras ativas")
+
+Isso garante que o comportamento padrão dos menus (e do usuário) não traga inativas.
+E mantém a possibilidade de gestão com active_only=false quando a UI pedir.
+
+6) FRONTEND: adicionar toggle “Mostrar inativas” também no RulesEditorBase
+- Criar state: showInactive (default false)
+- Ao carregar regras setoriais:
+  chamar /api/rule-engine/rules/grouped/{sectorId}?active_only={showInactive ? false : true}
+
+- Ao marcar o toggle, recarregar lista.
+
+7) GARANTIR: excluir regra deve excluir (deleted_at), não desativar
+- Manter botão “Excluir” chamando DELETE /api/sector-rules/{id}
+- Não substituir exclusão por toggle.
+- Se uma regra foi excluída no passado, ela não pode aparecer como “inativa”.
+
+CRITÉRIO DE ACEITE B)
+- Com “Mostrar inativas” desmarcado: só regras ativas aparecem.
+- Ao marcar: inativas aparecem com badge “Inativo”.
+- Regras excluídas jamais aparecem.
+
+========================
+C) MIGRAÇÃO / DADOS LEGADOS (recomendado)
+========================
+
+8) Para regras antigas que não tinham title e só tinham codigo:
+- Rodar um script de correção (uma vez):
+  UPDATE sector_rules SET title = codigo_regra WHERE title IS NULL;
+
+Isso garante que todas as regras terão título editável.
+
+CRITÉRIO DE ACEITE FINAL
+- Menus setoriais mostram título real (title).
+- É possível editar título e ele persiste após reload.
+- Por padrão não aparecem inativas/excluídas.
+- Toggle “Mostrar inativas” funciona e não mostra excluídas.

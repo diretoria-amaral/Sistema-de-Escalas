@@ -1,0 +1,118 @@
+CONTEXTO
+Estamos desenvolvendo um agente (Replit) para gerir escalas de colaboradores intermitentes por setor. Já implementamos:
+- Data Lake com detecção e parsing por conteúdo: HP diário (mês corrente + próximo mês) e relatórios diários de CHECKIN e CHECKOUT.
+- Regra REAL vs FORECAST por as_of_date; OCCUPANCY_SNAPSHOTS e OCCUPANCY_LATEST com precedência REAL > FORECAST.
+- Estatísticas EWMA de bias_pp por dia da semana e distribuição horária (matrizes) para checkin/checkout.
+- Módulo de Planejamento com conceito de Forecast Run (Baseline criado na sexta) e atualizações diárias.
+
+AGORA: FASE 5 — FECHAR GOVERNANÇA END-TO-END A PARTIR DO FORECAST RUN
+Queremos que o sistema gere a escala de Governança automaticamente (camareiras), SEM depender de preenchimento manual de parâmetros semanais.
+
+REQUISITOS PRINCIPAIS
+1) Novo conceito: “Escala baseada em Forecast Run”
+- Deve existir uma função/endpoint que receba forecast_run_id (baseline ou daily update) e gere:
+  (a) Demanda diária (quartos_vago_sujo e quartos_estadia estimados)
+  (b) Horas necessárias por dia
+  (c) Headcount por dia
+  (d) Distribuição de turnos (entrada, 1h almoço, saída) por colaboradora
+  (e) Registro em banco (weekly_schedule + daily_shifts) e retorno para frontend
+
+2) Modelo de Demanda da Governança (a partir de dados do Data Lake)
+- Inputs disponíveis:
+  - ocupação projetada por dia (occ_adj ou occ_raw+ajustes) já existente no ForecastRunDay
+  - histórico REAL de checkouts diários (contagem) via relatórios diários de CHECKOUT
+  - total de UHs (rooms/room_count): deve existir um parâmetro da unidade/empresa (se não existir, criar em Setup e persistir)
+- Objetivo: estimar, para cada dia futuro D:
+  - rooms_occupied_est = round(total_rooms * occ_pct_est/100)
+  - checkouts_est (departures_est) = rooms_occupied_est * checkout_rate_weekday(weekday(D))
+  - stayovers_est = max(rooms_occupied_est - checkouts_est, 0)
+- Aprendizado contínuo:
+  - criar e manter checkout_rate_weekday em tabela estatística (ex.: governance_checkout_rate_stats):
+    * para cada weekday: média (EWMA) de (checkouts_real / rooms_occupied_real)
+    * calcular rooms_occupied_real = round(total_rooms * occ_pct_real/100) usando OCCUPANCY_LATEST REAL
+    * atualizar diariamente ao processar CHECKOUT + HP do dia
+
+3) Parâmetros Operacionais por setor (Governança)
+- Deve existir tela/modelo para parâmetros do setor Governança (editáveis):
+  - tempo_vago_sujo_min (ex.: 25)
+  - tempo_estadia_min (ex.: 10)
+  - buffer_percent (ex.: 10%)
+  - meta_aproveitamento_percent (utilization) (ex.: 75%)  -> horas_total = horas_prod / utilization
+  - templates de turnos permitidos (lista) ex:
+    * 06:00-15:00 almoço 11:00-12:00
+    * 07:00-16:00 almoço 12:00-13:00
+    * 08:00-17:00 almoço 12:00-13:00
+    * 09:00-18:00 almoço 13:00-14:00
+  - regras de variação (para reduzir risco trabalhista):
+    * alternar template por semana / por dia
+    * permitir variação de horas dentro de limites
+    * garantir folga e não repetir padrões fixos indefinidamente (registrar histórico por colaborador)
+- Esses parâmetros devem ser versionados por data (effective_from) para auditoria.
+
+4) Algoritmo de distribuição de turnos (prático e auditável)
+- Para cada dia:
+  - minutos_prod = checkouts_est*tempo_vago_sujo_min + stayovers_est*tempo_estadia_min
+  - minutos_prod_com_buffer = minutos_prod*(1+buffer)
+  - horas_totais = (minutos_prod_com_buffer/60) / utilization
+  - Definir headcount e turnos:
+    * usar templates de turno (8h com 1h almoço -> 7h produtivas) OU permitir combinações 6h/7h/8h conforme configuração
+    * objetivo: cobrir janela de pico de checkouts (matriz horária checkout) e também manutenção de quartos até o início do checkin
+  - Regra de pico:
+    * determinar “pico_checkout” do weekday pelo hourly_distribution_stats(metric_name='checkout')
+    * preferir escalar mais pessoas iniciando 06–08 em dias com pico concentrado 08–12
+- Output: lista de DailyShift por funcionária com start, lunch_start, lunch_end, end e horas_total.
+
+5) Integração com intermitente / convocações
+- Após gerar a escala semanal:
+  - gerar “convocations” por colaborador com:
+    * semana_inicio, semana_fim
+    * dias e horários
+    * total de horas semanais
+    * data prevista de pagamento (terça)
+  - exportar CSV/XLSX de convocação (pode ser endpoint que retorna arquivo)
+
+6) Frontend
+- No Planejamento (PlanejamentoPage):
+  - adicionar botão “Gerar Escala Governança” no Baseline e em cada Daily Update
+  - ao clicar, chamar endpoint /forecast-runs/{id}/generate-governance-schedule
+  - mostrar:
+    * resumo por dia (occ%, occupied_est, checkouts_est, stayovers_est, horas_totais, headcount)
+    * lista de turnos por colaboradora
+    * opção de exportar convocação
+
+IMPLEMENTAÇÃO (BACKEND)
+A) Criar serviço: GovernanceDemandService
+- métodos:
+  - get_total_rooms()
+  - compute_rooms_occupied(occ_pct)
+  - estimate_checkouts(weekday, rooms_occupied_est)
+  - estimate_stayovers(...)
+  - compute_work_minutes(...)
+  - update_checkout_rate_stats_from_real(date_range)
+
+B) Criar endpoint:
+- POST /forecast-runs/{forecast_run_id}/generate-governance-schedule
+  - gera demanda para Mon–Sun do forecast_run.week_start
+  - gera escala (WeeklySchedule + DailyShift) e salva
+  - retorna estrutura completa para UI
+
+C) Persistência:
+- Garantir tabelas WeeklySchedule e DailyShift adequadas (já existem; ajustar se necessário)
+- Criar tabela stats para checkout_rate_weekday (EWMA + n + std se possível)
+- Garantir audit_log para rastreabilidade (quem gerou, quando, qual forecast_run foi usado)
+
+D) Remover/aposentar endpoint stub /schedules/generate-governance OU fazer ele chamar o novo fluxo.
+
+CRITÉRIOS DE ACEITAÇÃO
+- Com apenas uploads diários (HP mês corrente + HP próximo mês + checkin/checkout do dia), o sistema:
+  1) gera baseline na sexta com projeção ajustada
+  2) gera daily updates
+  3) gera escala de governança a partir de qualquer forecast_run
+  4) atualiza automaticamente checkout_rate_weekday e melhora as estimativas
+  5) exporta convocação semanal (CSV/XLSX)
+- Tudo auditável: mostrar fontes (generated_at do HP e data âncora dos relatórios) usadas na geração.
+
+IMPORTANTE
+- Evitar “mágica opaca”. Priorizar algoritmo simples, logs e explicação de cálculo.
+- Não exigir manipulação manual de planilhas/relatórios.
+- Manter nomes e arquitetura consistentes com o projeto atual.

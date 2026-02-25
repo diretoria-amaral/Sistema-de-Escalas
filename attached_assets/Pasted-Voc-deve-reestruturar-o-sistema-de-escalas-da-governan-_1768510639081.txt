@@ -1,0 +1,68 @@
+Você deve reestruturar o sistema de escalas da governança como um AGENTE DECISÓRIO,
+não como um simples gerador de escalas.
+
+O agente deve operar em quatro núcleos de inteligência independentes e encadeados:
+
+1) INTELIGÊNCIA DE DEMANDA
+- Consumir HP diário (mês corrente + próximo)
+- Diferenciar dados históricos (realizados) e futuros (previsões)
+- Aplicar estatística histórica de variação (sexta vs semana seguinte)
+- Incorporar margem de segurança definida nas regras do setor
+- Calcular a demanda total semanal em minutos:
+  - Limpeza variável (ocupação)
+  - Atividades unitárias programadas
+  - Atividades recorrentes (diárias, semanais, quinzenais…)
+  - Atividades eventuais (input obrigatório do usuário)
+
+2) INTELIGÊNCIA DE CAPACIDADE
+- Considerar quadro de colaboradores fixos e intermitentes
+- Aplicar regras trabalhistas e operacionais
+- Calcular horas disponíveis
+- Aplicar percentual máximo de utilização definido pelo setor
+
+3) INTELIGÊNCIA DE ESCALONAMENTO
+- Utilizar estatística horária de check-ins e check-outs
+- Considerar regras de tolerância operacional:
+  - Check-ins entre 12h e 6h → data do primeiro dia
+  - Check-outs entre 18h e 14h → data do primeiro dia
+- Projetar liberação de UHs por hora
+- Definir turnos ideais (entrada, intervalo, saída)
+- Alternar horários e folgas entre colaboradores
+- Garantir equilíbrio de horas trabalhadas
+- Respeitar mínimos e máximos semanais por colaborador
+
+4) INTELIGÊNCIA DE GOVERNANÇA
+- Gerar escala semanal SUGESTIVA
+- Exibir memória de cálculo e hierarquia de regras aplicadas
+- Indicar explicitamente regras não atendidas, se houver
+- Permitir ciclo de análise e contestação pelo usuário
+- Recalcular escala se houver alterações sugeridas
+- Bloquear aprovação se regras críticas forem violadas
+
+FLUXO OBRIGATÓRIO:
+- Forecast Run = apenas simulação (não gera escala)
+- Planejamento Semanal = consolida dados da semana
+- Governança (Demanda/Escala) = orquestrador central do agente
+- Convocações = somente após escala aprovada
+
+O menu Governança deve:
+- Permitir seleção de setor
+- Permitir seleção da semana
+- Exibir parâmetros do setor
+- Exibir HP base (sexta anterior)
+- Exibir HP corrigido pela estatística
+- Calcular demanda total
+- Gerar escala sugestiva
+- Sugerir ajustes dinâmicos durante a semana conforme HP real
+
+O menu Convocações deve:
+- Emitir convocações após aprovação
+- Registrar aceite ou recusa
+- Reprocessar escala em caso de recusa
+- Respeitar intervalos mínimos de convocação conforme regras do setor
+
+É PROIBIDO:
+- Ignorar atividades não variáveis
+- Gerar escala sem memória de cálculo
+- Criar dados fictícios
+- Acoplar menus de forma circular

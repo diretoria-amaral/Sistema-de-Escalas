@@ -1,0 +1,254 @@
+PROMPT 10 (copiar/colar) — Multi-Setor: Atividades por Setor + Regras Globais x Regras Operacionais por Setor
+
+Você está trabalhando em um agente de escalas de convocação (intermitentes) com Data Lake de relatórios (HP, checkin, checkout) já implementado. Agora precisamos consolidar a arquitetura multi-setor:
+
+OBJETIVO DO PROMPT 10
+
+Atividades devem ser vinculadas a um setor (ex.: Governança, Recepção, Manutenção etc.).
+
+A área “Regras” deve ser dividida em duas:
+
+Regras Trabalhistas (Globais): válidas para todos os setores.
+
+Regras Operacionais por Setor: parâmetros e indicadores específicos de cada setor, com botões/abas por setor.
+
+O gerador de escala deve sempre usar:
+
+Regras Trabalhistas Globais (sempre)
+
+Regras Operacionais do Setor alvo (ex.: Governança)
+
+Garantir migração de dados e compatibilidade com o que já existe.
+
+1) BACKEND — MODELOS / BANCO / MIGRAÇÕES
+1.1. Atividades vinculadas a Setor
+
+Se já existir tabela/modelo de atividades (ex.: governance_activity, cbo_activity, etc.), padronize para um modelo mais genérico:
+
+activity (ou manter os existentes, mas com vínculo obrigatório ao setor)
+
+Campos mínimos:
+
+id
+
+sector_id (FK -> sector.id) NOT NULL
+
+role_id (opcional, se atividade for por função/cargo)
+
+name
+
+description (opcional)
+
+estimated_minutes (opcional, mas recomendado para setores que usam tempo padrão)
+
+is_active
+
+created_at, updated_at
+
+Migração
+
+Se já existirem atividades sem setor:
+
+Criar sector_id com default temporário (ex.: Governança) apenas para migração, depois tornar NOT NULL.
+
+Criar rotina de “correção” no admin/UI para redistribuir atividades por setor.
+
+1.2. Regras Trabalhistas Globais (uma única fonte)
+
+Criar tabela/modelo labor_rules_global (ou legal_rules_global) com apenas 1 registro ativo (versão atual).
+
+Campos sugeridos (adaptar ao que já existe no projeto):
+
+id
+
+min_notice_hours (ex.: 72)
+
+max_hours_day
+
+max_hours_week
+
+min_rest_hours_between_shifts
+
+min_break_minutes / lunch_break_minutes (ex.: 60)
+
+max_consecutive_days (se aplicável)
+
+rules_json (para extensibilidade)
+
+version, is_active
+
+updated_at
+
+Observação: essas regras NÃO pertencem a setor. São globais.
+
+1.3. Regras Operacionais por Setor
+
+Criar tabela/modelo sector_operational_rules (1 por setor, com versionamento opcional).
+
+Campos sugeridos:
+
+id
+
+sector_id (FK, UNIQUE)
+
+target_utilization_pct
+
+buffer_pct
+
+shift_templates_json (ex.: lista de templates permitidos por setor)
+
+kpis_json (indicadores e metas)
+
+operational_params_json (parâmetros específicos, ex. governança: tempos de limpeza, janelas operacionais)
+
+updated_at
+
+Caso Governança (exemplo dentro de operational_params_json)
+
+tempo_vago_sujo_min
+
+tempo_estadia_min
+
+janela_checkout (00–12)
+
+janela_checkin (14–12 com hour+24)
+
+policy_quartos_prontos_por_percentil (ex.: Hi20/Hi50 etc.)
+
+2) BACKEND — ENDPOINTS / SERVICES
+2.1. Endpoints para Atividades
+
+GET /api/sectors/:sector_id/activities
+
+POST /api/sectors/:sector_id/activities
+
+PUT /api/activities/:id
+
+DELETE /api/activities/:id (soft delete recomendado: is_active=false)
+
+Validação:
+
+Não permitir criar atividade sem sector_id.
+
+Se role_id informado, verificar se pertence ao mesmo setor (se existir essa relação no teu sistema).
+
+2.2. Endpoints Regras Trabalhistas Globais
+
+GET /api/rules/labor (retorna a regra global ativa)
+
+PUT /api/rules/labor (atualiza e versiona; grava audit log)
+
+2.3. Endpoints Regras Operacionais por Setor
+
+GET /api/sectors/:sector_id/rules/operational
+
+PUT /api/sectors/:sector_id/rules/operational (atualiza; grava audit log)
+
+2.4. Integração no gerador de escala
+
+No schedule_generator:
+
+Entrada obrigatória: sector_id (qual setor estamos escalando)
+
+Carregar:
+
+labor_rules_global ativo
+
+sector_operational_rules do setor
+
+Aplicar regras globais em qualquer validação (descanso, intervalo, limites etc.)
+
+Aplicar regras operacionais do setor na lógica de produtividade, templates e parâmetros.
+
+3) FRONTEND — UI/UX (MUITO IMPORTANTE)
+3.1. Atividades (Página de Atividades)
+
+Transformar “ActivitiesPage” em multi-setor:
+
+No topo: seletor de Setor (dropdown ou botões)
+
+Ao selecionar setor: listar apenas atividades daquele setor
+
+Criar/editar atividade já com setor travado (sector_id)
+
+Campos mínimos no formulário:
+
+Nome da atividade
+
+Setor (fixo pelo filtro)
+
+Tempo estimado (min) (opcional)
+
+Ativo (checkbox)
+
+3.2. Regras (Página de Regras)
+
+Dividir em 2 abas fixas:
+
+Regras Trabalhistas (Globais)
+
+Form com campos globais (ex.: 72h antecedência, descanso etc.)
+
+Botão “Salvar” com confirmação e audit log
+
+Regras Operacionais por Setor
+
+Mostrar botões/abas por Setor cadastrado
+
+Ao clicar no setor:
+
+Carregar regras operacionais daquele setor
+
+Permitir editar parâmetros específicos (com JSON editor se necessário, mas preferir UI com campos)
+
+Botão “Salvar regras do setor X”
+
+3.3. Impacto no “SchedulePage”
+
+A geração de escala deve exigir “Setor”:
+
+Selecionar setor -> usa regras e atividades daquele setor
+
+Ao exibir escala, mostrar:
+
+“Regras trabalhistas globais: versão X”
+
+“Regras operacionais do setor: atualizado em DD/MM”
+
+4) AUDITORIA E CONSISTÊNCIA (OBRIGATÓRIO)
+
+Cada atualização de regras (globais ou setoriais) deve gerar registro em audit_log:
+
+quem alterou, quando, antes/depois (diff ou snapshot JSON)
+
+Se o setor não tiver regras operacionais cadastradas:
+
+Bloquear geração de escala e mostrar aviso: “Defina regras operacionais do setor primeiro”.
+
+5) CRITÉRIOS DE ACEITE (DEFINIÇÃO DE PRONTO)
+
+Não existe mais atividade sem setor.
+
+UI de atividades filtra por setor e cria/edita corretamente.
+
+UI de regras está dividida em:
+
+Trabalhistas (global)
+
+Operacionais por setor (com botões/abas por setor)
+
+Schedule generator recebe sector_id e usa regras globais + operacionais corretamente.
+
+Persistência e endpoints funcionando com validações.
+
+Migração feita sem quebrar dados existentes; se necessário, setor default aplicado e registrável para ajuste posterior.
+
+Audit log gerado nas alterações de regras.
+
+6) IMPORTANTE: NÃO QUEBRAR O QUE JÁ FUNCIONA
+
+Manter o Data Lake como está (HP/checkin/checkout).
+
+Apenas “conectar” a nova estrutura multi-setor aos módulos já existentes.
+
+Se houver código legado específico de governança, refatorar gradualmente, mas garantir compatibilidade.

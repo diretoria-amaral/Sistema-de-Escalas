@@ -1,0 +1,139 @@
+CONTEXTO
+O agente de cálculo de escalas já possui:
+- Data Lake V4 funcional (HP diário, CHECKIN, CHECKOUT, REAL vs FORECAST, estatísticas),
+- Regras globais e operacionais por setor,
+- Forecast Run / Baseline implementado.
+
+Antes de avançar em novas funcionalidades, é necessário corrigir falhas críticas
+de estabilidade, UX e observabilidade que hoje impedem o uso operacional seguro.
+
+OBJETIVO DESTA ONDA (NÃO adicionar novas features)
+1) Eliminar erros que impedem salvar regras ou carregar previsões.
+2) Tornar o Data Lake auditável e reprocessável de fato.
+3) Melhorar mensagens de erro, distinguindo "falta de dados" de "erro técnico".
+4) Garantir que toda ação visível na UI tenha efeito real no backend.
+
+---
+
+# 1) CORREÇÃO DE ERROS CRÍTICOS (BUGFIX)
+
+## 1.1 Erro ao salvar Regras (Global e por Setor)
+- Investigar e corrigir qualquer erro ao salvar:
+  - Regras Trabalhistas Globais
+  - Regras Operacionais por Setor
+- Possíveis causas a verificar:
+  - Schema JSON incompatível
+  - Constraint de banco (NOT NULL / FK)
+  - Endpoint PUT retornando 200 mas não persistindo
+- Critério de aceite:
+  - Salvar regras retorna sucesso
+  - Reabrir a página reflete exatamente os valores salvos
+  - Registro de alteração aparece em audit_log
+
+## 1.2 “Erro ao carregar previsão” (Forecast / Data Lake)
+- Separar claramente dois cenários:
+  A) Não existem dados suficientes para cálculo
+  B) Erro técnico (parser, query, exception)
+- Ajustar backend para retornar códigos/mensagens distintas:
+  - Ex.: DATA_NOT_AVAILABLE vs INTERNAL_ERROR
+- Ajustar frontend para exibir mensagens claras:
+  - “Ainda não há dados suficientes para gerar previsão”
+  - “Erro técnico ao carregar previsão — ver logs”
+- Critério de aceite:
+  - Usuário nunca vê erro genérico sem explicação
+  - Sistema não quebra quando não há dados
+
+---
+
+# 2) DATA LAKE — STATUS, DETALHES E REPROCESSAMENTO
+
+## 2.1 Status de Processamento (HP / Checkin / Checkout)
+- Corrigir casos onde:
+  - Relatório aparece como “Failed” mesmo tendo sido detectado com sucesso
+  - Data de emissão (generated_at) não aparece
+- Garantir que cada registro mostre:
+  - Tipo (HP / CHECKIN / CHECKOUT)
+  - Status real (Processed / Failed / Pending)
+  - generated_at
+  - parser_version
+- Critério de aceite:
+  - Status reflete o estado real do processamento
+
+## 2.2 Botão “Detalhes”
+- Implementar ação real no botão “Detalhes”:
+  - Exibir:
+    - tipo do relatório
+    - datas detectadas
+    - quantos registros foram extraídos
+    - mensagens de erro (se houver)
+- Critério de aceite:
+  - “Detalhes” sempre abre um painel/modal funcional
+
+## 2.3 Botão “Reprocessar”
+- Implementar reprocessamento real:
+  - Reexecutar parser
+  - Atualizar status
+  - Criar novo snapshot (sem duplicar dados já válidos)
+- Registrar evento em audit_log:
+  - REPORT_REPROCESSED
+- Critério de aceite:
+  - Reprocessar altera status quando erro era recuperável
+  - Falhas persistentes ficam claramente documentadas
+
+---
+
+# 3) UX BÁSICO E COERÊNCIA DE NAVEGAÇÃO (SEM REESTRUTURA GRANDE)
+
+## 3.1 Upload duplicado
+- Garantir que:
+  - Upload de relatórios funcione corretamente
+  - Se houver mais de um ponto de upload, ambos chamem o mesmo serviço
+- Não criar nova tela agora, apenas evitar duplicidade/confusão
+
+## 3.2 Microtextos e feedback
+- Ajustar mensagens de sucesso/erro para:
+  - salvar regras
+  - carregar previsões
+  - processar relatórios
+- Critério de aceite:
+  - Usuário entende o que aconteceu e o que fazer a seguir
+
+---
+
+# 4) LOGS, AUDITORIA E SEGURANÇA OPERACIONAL
+
+## 4.1 Audit Log
+- Garantir que os seguintes eventos estejam sendo registrados:
+  - RULE_SAVED (global / setor)
+  - FORECAST_RUN_CREATED
+  - REPORT_PROCESSED
+  - REPORT_FAILED
+  - REPORT_REPROCESSED
+- Campos mínimos:
+  - timestamp
+  - usuário
+  - entidade afetada
+  - payload resumido
+
+## 4.2 Logs técnicos
+- Garantir que erros técnicos tenham stacktrace/log interno,
+  mesmo que a UI mostre mensagem amigável.
+
+---
+
+# 5) CRITÉRIOS DE ACEITE GERAIS (DEFINIÇÃO DE PRONTO)
+
+Esta ONDA 1 será considerada concluída quando:
+1) Nenhuma tela crítica exibir erro genérico sem explicação.
+2) Regras (globais e setoriais) possam ser salvas e reabertas corretamente.
+3) Data Lake permita:
+   - ver status real
+   - ver detalhes
+   - reprocessar relatórios
+4) Forecast e previsões não “quebrem” por ausência de dados.
+5) Todas as ações da UI tenham efeito real no backend.
+
+IMPORTANTE
+- NÃO adicionar novas funcionalidades.
+- NÃO alterar arquitetura já aprovada.
+- Foco exclusivo em correção, estabilidade e clareza.

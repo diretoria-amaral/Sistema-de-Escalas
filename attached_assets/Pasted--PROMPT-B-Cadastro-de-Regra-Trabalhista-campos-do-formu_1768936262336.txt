@@ -1,0 +1,57 @@
+
+---
+
+# PROMPT B — Cadastro de Regra Trabalhista: campos do formulário + validade + bug de tela branca
+
+## Problema 1: Campos do formulário pequenos demais
+Campos como pergunta/resposta precisam suportar textos longos (regras trabalhistas são extensas).
+
+### Correção de UI
+- Transformar `pergunta` e `resposta` em **TextArea autosize** (mín 4 linhas, máximo ~16 linhas com scroll)
+- `codigo_regra` curto (input simples)
+- `metadados_json` opcional com editor expansível (accordion)
+
+---
+
+## Problema 2: Datas de validade (início/fim) não fazem sentido para você
+Você não está vendo utilidade e isso está atrapalhando.
+
+### Solução correta (sem perder robustez)
+**Não remover do banco** (isso quebra governança/versionamento futuro), mas:
+- Tornar **opcional** e **avançado** no UI:
+  - esconder por padrão em “Opções avançadas”
+  - default: sem datas (regra vigente por tempo indeterminado)
+- Na listagem, não mostrar datas se vazias.
+
+📌 Motivo técnico para manter (sem te impor):
+- permite versionar regras sem apagar histórico
+- permite mudar regra “a partir de uma data” sem perder rastreabilidade
+
+---
+
+## Problema 3: Ao clicar “Criar”, fecha e fica tela branca
+Isso é bug de navegação/estado (React). Quase sempre é:
+- exceção não tratada após submit
+- erro no retorno do endpoint
+- rota redirecionando para caminho inexistente
+- state setState em componente desmontado
+- crash por JSON mal parseado
+
+### Correção obrigatória
+1) Envolver submit com try/catch real
+2) Mostrar toast de erro com mensagem do backend
+3) Não fazer redirect se a resposta não vier ok
+4) Logar no console com contexto (apenas dev)
+5) Garantir que após criar:
+   - o modal fecha
+   - a lista recarrega
+   - mantém o setor selecionado
+6) Criar boundary simples (ErrorBoundary) para não “branquear” a tela:
+   - exibir fallback: “Ocorreu um erro na tela. Clique para recarregar.”
+
+### Backend
+- Validar payload e retornar erro bem formado (HTTP 422/400) com mensagem clara.
+- Garantir que POST /api/rules retorna o objeto criado no formato esperado pelo frontend.
+
+Entregar:
+- Fix aplicado e reproduzido: “Criar regra trabalhista” não pode derrubar a tela.

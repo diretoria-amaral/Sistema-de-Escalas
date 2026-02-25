@@ -1,0 +1,136 @@
+CONTEXTO
+O sistema já possui:
+- Data Lake V4 (HP + checkin/checkout)
+- Estatísticas EWMA (bias_pp por weekday)
+- Distribuição horária por weekday (checkouts e checkins em “dia operacional”)
+- PROMPT 2 implementou: Forecast Run (BASELINE + ADJUSTMENT) com occ_raw e occ_adj por dia (SEG–DOM)
+
+OBJETIVO DO PROMPT 3
+Implementar a PRIMEIRA VERSÃO DO “MÓDULO DE ESCALAS — GOVERNANÇA (camareiras)”, consumindo o BASELINE (e opcionalmente adjustment) para:
+1) Calcular a QUANTIDADE de camareiras por dia
+2) Distribuir HORÁRIOS de entrada / almoço (1h) / saída de forma escalonada
+3) Gerar um “Housekeeping Plan” associado ao forecast_run (baseline ou adjustment)
+4) Permitir que o gestor ajuste parâmetros em tela (por setor) e regenere o plano
+5) Manter auditabilidade: inputs, parâmetros, cálculos e resultado
+
+PREMISSAS OPERACIONAIS (fixas por enquanto)
+- CHECKOUT típico até 12:00
+- CHECKIN típico a partir de 14:00 até 12:00 do dia seguinte (dia operacional)
+- Queremos escalonar turnos para cobrir melhor a janela de maior pressão
+- O módulo deve funcionar mesmo que, inicialmente, NÃO exista um relatório perfeito de “stayovers”/“departures” detalhado — deve haver fallback usando ocupação e parâmetros.
+
+REQUISITOS FUNCIONAIS
+A) Parâmetros por setor (Governança)
+Criar/ajustar tabela de “sector_parameters” (ou equivalente) com UI para GOVERNANÇA contendo, no mínimo:
+1) tempo_vago_sujo_min (default 25)
+2) tempo_estadia_min (default 10)
+3) meta_aproveitamento_pct (utilization, ex.: 0.80) => % do turno realmente produtivo
+4) buffer_pct (ex.: 0.10)
+5) horas_turno_padrao (ex.: 8.0) e opções de turnos (ex.: 6h, 7h, 8h) [configurável]
+6) janela_checkout (ex.: 00–12)
+7) janela_checkin (ex.: 14–35 no hour_timeline)
+8) regras de almoço:
+   - duracao_almoco_min = 60
+   - restrição: almoço deve ocorrer entre (ex.: 11:00–15:00) configurável
+9) regras de escalonamento:
+   - n_grupos_inicio (ex.: 2 a 4)
+   - offsets de entrada permitidos (ex.: 07:00, 08:00, 09:00, 10:00)
+10) safety_pp por weekday (separado do forecast service, mas configurável aqui como política do setor)
+
+B) Base de dados do plano de governança
+Criar:
+1) housekeeping_plan
+   - id
+   - forecast_run_id (fk)  => baseline ou adjustment usado
+   - sector_id (governança)
+   - week_start/week_end
+   - created_at/created_by
+   - params_snapshot (jsonb) => cópia dos parâmetros usados
+   - status: DRAFT/APPROVED
+2) housekeeping_plan_day
+   - id
+   - housekeeping_plan_id
+   - target_date
+   - occ_raw/occ_adj (copiados do forecast_daily)
+   - demand_minutes_productive (minutos produtivos)
+   - demand_hours_total (já dividido por utilization)
+   - headcount_required (camareiras necessárias)
+   - notes
+3) housekeeping_shift
+   - id
+   - housekeeping_plan_day_id
+   - employee_id (nullable nesta fase, se ainda não fizermos alocação nominal)
+   - start_time
+   - lunch_start
+   - lunch_end
+   - end_time
+   - hours_total
+   - group_id (para escalonamento)
+   - rationale (texto curto: “cobrir pico de checkout”, etc.)
+
+IMPORTANTE: mesmo se não houver alocação nominal, devemos gerar a “grade de turnos” (slots). A alocação por colaborador pode ficar para fase posterior.
+
+C) Regras de cálculo (MVP consistente e evolutivo)
+1) Demanda diária de limpeza (duas camadas):
+   CAMADA 1 (quando existir dados de departures/stayovers):
+   - departures = número de checkouts do dia (do relatório checkout do dia) OU outra fonte disponível
+   - stayovers = ocupação do dia menos departures (ou fonte melhor se existir)
+   - demand_minutes = departures*tempo_vago_sujo + stayovers*tempo_estadia
+   CAMADA 2 (fallback quando não for possível estimar stayovers):
+   - usar proxy baseado em ocupação:
+     - total_rooms = 144 (ou puxar de configuração)
+     - occupied_rooms_est = round(total_rooms * occ_adj/100)
+     - departures_est = proxy usando distribuição histórica de checkouts (média por weekday, derivada do data lake)
+     - stayovers_est = max(occupied_rooms_est - departures_est, 0)
+     - demand_minutes = departures_est*tempo_vago_sujo + stayovers_est*tempo_estadia
+2) Aplicar buffer:
+   demand_minutes_buffered = demand_minutes*(1+buffer_pct)
+3) Converter para horas totais (considerando utilization):
+   demand_hours_total = (demand_minutes_buffered/60) / meta_aproveitamento_pct
+4) Headcount:
+   headcount = ceil(demand_hours_total / horas_turno_medio)
+   Observação: horas_turno_medio pode ser a opção escolhida (ex. 8h) ou um mix configurável.
+5) Distribuição de turnos (escalonamento por pico):
+   - Usar hourly_distribution_stats de CHECKOUT por weekday para identificar horas de maior concentração até 12:00
+   - Criar “grupos” de entrada (n_grupos_inicio) para cobrir o pico com maior densidade
+   - Heurística simples (MVP):
+     - Se pico cedo (ex.: 08–10) → concentrar mais pessoas com entrada 07:00/08:00
+     - Se pico mais tarde (ex.: 10–12) → deslocar parte para 09:00/10:00
+   - Almoço deve ser escalonado para não retirar toda a equipe ao mesmo tempo
+6) Saída:
+   - Fase MVP: end_time = start_time + hours_total + 1h almoço (se almoço dentro do turno)
+   - Garantir coerência (não ultrapassar limites configurados)
+
+D) Integração com Forecast Run
+- O módulo deve ter botão “Gerar Plano (Governança) a partir do BASELINE aprovado”
+- E botão “Gerar Plano a partir do AJUSTE do dia” (se quiser comparar e sugerir alterações)
+- Guardar forecast_run_id em housekeeping_plan
+
+E) Tela nova (Governança → Planejamento)
+Criar página “Governança / Planejamento de Escala” com:
+1) Seleção da semana (week_start)
+2) Seleção de fonte:
+   - Baseline aprovado
+   - Adjustment run (lista por data)
+3) Painel de parâmetros (editáveis) com “Salvar” e “Gerar/Regerar”
+4) Resultado por dia (SEG–DOM):
+   - occ_raw, occ_adj
+   - demand_hours_total
+   - headcount_required
+   - grade de turnos (slots) com start/lunch/end
+5) Exportação:
+   - Exportar CSV/Excel do plano (por dia e por turno)
+6) Auditabilidade:
+   - Exibir params_snapshot
+   - Exibir qual distribuição horária foi usada (weekday + n)
+
+ACEITAÇÃO / NÃO-REGRESSÃO
+- Não quebrar o Data Lake V4 nem o módulo Forecast Run do PROMPT 2
+- Gerar housekeeping_plan completo para uma semana com base no baseline
+- Regenerar alterando parâmetros e persistir versões (ou sobrescrever mantendo audit_log)
+- Produzir turnos escalonados coerentes com a distribuição horária de checkouts
+- Código com logs claros e métodos versionados (method_version="hk_v1")
+
+NOTAS IMPORTANTES
+- Nesta fase, não precisamos alocar colaborador nominalmente (employee_id pode ser null).
+- A fase seguinte (posterior) fará: alocação nominal, restrições individuais, intermitentes, folgas e otimização.

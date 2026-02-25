@@ -1,0 +1,127 @@
+CONTEXTO
+O sistema já possui:
+- Programação de Atividades por setor e semana (baseline + adjustments)
+- Atividades vinculadas a setores
+- Regras trabalhistas globais
+- Regras operacionais por setor
+- Forecast Run / Baseline congelado
+- Convocações como entidade jurídica separada
+
+OBJETIVO DO PROMPT 16
+Criar o módulo “Turnos / Templates”, que serve como ponte entre:
+Programação de Atividades  →  Geração de Escalas  →  Convocações
+
+Turnos/Templates NÃO alocam pessoas.
+Eles apenas definem “como” o trabalho será distribuído em jornadas padrão.
+
+---
+
+# 1) CONCEITO DE TURNO / TEMPLATE
+
+Um Turno/Template representa:
+- um padrão reutilizável de jornada
+- associado a um setor
+- com horários, intervalo e limites legais
+
+Exemplos:
+- Camareira Manhã: 07:00–15:00 (1h refeição)
+- Camareira Tarde: 12:00–20:00 (1h refeição)
+- Recepção Diurno: 07:00–19:00 (escala 12x36 futura)
+- Manutenção Plantão: 08:00–17:00
+
+---
+
+# 2) MODELAGEM DE DADOS
+
+## 2.1 Tabela: shift_template
+Campos mínimos:
+- id
+- sector_id (fk)
+- name
+- start_time
+- end_time
+- break_minutes
+- max_hours
+- min_hours
+- valid_weekdays (array: 0–6)
+- is_active
+- created_at / updated_at
+
+## 2.2 Relacionamento
+- Templates são SEMPRE por setor
+- Um setor pode ter múltiplos templates
+- Templates podem ser usados por múltiplas semanas
+
+---
+
+# 3) BACKEND — SERVIÇOS
+
+## 3.1 CRUD de Templates
+- Criar / editar / desativar templates
+- Validar:
+  - start_time < end_time
+  - carga horária respeita regras globais
+  - intervalo >= mínimo legal
+
+## 3.2 Compatibilidade com Programação de Atividades
+Criar serviço:
+- `match_programming_to_templates(program_items, templates)`
+
+Função:
+- Recebe carga de trabalho por dia (minutos)
+- Sugere:
+  - quantos turnos do template X
+  - em quais dias
+- Retorna estrutura pronta para o gerador de escala
+
+---
+
+# 4) FRONTEND — TELAS
+
+## 4.1 Página “Turnos / Templates”
+Menu: Operação → Turnos / Templates
+
+Funcionalidades:
+- Filtro por setor
+- Lista de templates ativos
+- Botão “Novo Template”
+- Ativar / desativar template
+
+## 4.2 Integração Visual
+- Na Programação de Atividades:
+  - Mostrar quais templates são compatíveis
+- Na Geração de Escala:
+  - Usuário pode escolher:
+    - automático (sistema decide)
+    - manual (seleciona templates)
+
+---
+
+# 5) INTEGRAÇÃO COM ESCALA
+
+- Templates NÃO geram convocação
+- Templates alimentam:
+  - `daily_shift`
+  - `weekly_schedule`
+- Escala resultante deve indicar:
+  - template utilizado
+  - horas totais
+  - janela de trabalho
+
+---
+
+# 6) AUDITORIA
+Registrar:
+- TEMPLATE_CREATED
+- TEMPLATE_UPDATED
+- TEMPLATE_DISABLED
+- TEMPLATE_USED_IN_SCHEDULE
+
+---
+
+# 7) CRITÉRIOS DE ACEITAÇÃO
+1) Consigo criar templates por setor.
+2) Templates respeitam regras trabalhistas.
+3) Templates são usados na geração de escalas.
+4) Nenhuma convocação é criada aqui.
+5) Tudo funciona sem quebrar programação e convocações.

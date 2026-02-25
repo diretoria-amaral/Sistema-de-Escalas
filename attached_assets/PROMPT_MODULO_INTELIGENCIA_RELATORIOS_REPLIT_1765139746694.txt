@@ -1,0 +1,62 @@
+
+# PROMPT GERAL – MÓDULO DE INTELIGÊNCIA DE RELATÓRIOS + AJUSTE DINÂMICO DE ESCALAS
+
+Você está desenvolvendo um agente de IA para gestão de escalas de trabalho de um hotel com forte sazonalidade, planejamento semanal às quintas e ajustes diários contínuos.
+
+## 1. TELA ÚNICA DE UPLOAD DE RELATÓRIOS
+Criar uma tela única onde o usuário possa:
+- Fazer upload de relatórios em PDF, Excel e CSV.
+- Informar intervalo de datas.
+- Visualizar histórico de uploads.
+
+## 2. RECONHECIMENTO AUTOMÁTICO DE RELATÓRIOS
+O sistema deve tentar identificar automaticamente:
+- Tipo de relatório;
+- Indicadores presentes;
+- Setores afetados.
+
+Caso não reconheça:
+- Usuário escolhe manualmente em lista cadastrada.
+
+## 3. RELATÓRIOS MULTISETORIAIS
+Um único relatório pode alimentar:
+- Governança
+- Recepção
+- A&B
+- Manutenção
+
+Este vínculo deve ser parametrizável.
+
+## 4. PLANEJAMENTO SEMANAL + AJUSTE DIÁRIO
+- Escala oficial gerada às quintas.
+- Sistema continua processando relatórios diariamente.
+- Compara previsto x realizado.
+- Recomenda ajustes contínuos.
+
+## 5. MEMÓRIA ESTATÍSTICA DE DESVIOS
+Para cada dia da semana:
+- Armazenar ocupação prevista (quinta).
+- Armazenar ocupação real.
+- Calcular desvio médio.
+- Aplicar fator de correção automática.
+
+## 6. USO DOS DADOS NA MÃO DE OBRA
+Os desvios devem impactar:
+- Quantidade de colaboradores
+- Turnos
+- Horas trabalhadas
+- Prioridade de convocação
+
+## 7. PREPARAÇÃO PARA API DO PMS
+Desde já estruturar:
+- Camada de ingestão via API futura
+- Substituição progressiva do upload manual
+
+## 8. GOVERNANÇA DOS DADOS
+- Controle de permissões
+- Logs obrigatórios
+- Auditoria de ajustes automáticos
+- Versionamento das estatísticas
+
+OBJETIVO FINAL:
+Criar um sistema adaptativo que aprenda continuamente com a realidade da operação.

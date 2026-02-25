@@ -1,0 +1,185 @@
+PROMPT 5 — MULTISETOR (Atividades vinculadas ao Setor + Regras divididas em Global Trabalhista e Operacional por Setor)
+
+Contexto:
+O agente deixou de ser exclusivo para Governança. Precisamos ajustar a base para suportar múltiplos setores (Governança, Recepção, Manutenção etc.) mantendo:
+- Data Lake V4 (HP diário + Checkin/Checkout diário) já implementado.
+- Forecast Run / Baseline de Planejamento já implementado.
+Agora o foco é: estrutura multissetor para ATIVIDADES e REGRAS.
+
+OBJETIVOS DO PROMPT 5
+1) Atividades devem ter vínculo obrigatório com SETOR.
+2) Área “Regras” deve ser dividida em:
+   2.1) Regras Trabalhistas (globais, válidas para todos os setores)
+   2.2) Regras Operacionais e Indicadores (por setor; UI com botões/abas por setor cadastrado)
+3) Migrar/compatibilizar o que já existe (Governança) para o novo modelo, sem quebrar telas existentes e sem perder dados.
+
+====================================================================================================
+PARTE A — BACKEND (DB + Models + Schemas + Endpoints)
+====================================================================================================
+
+A1) ATIVIDADES MULTISETOR
+Hoje existe GovernanceActivity (e possivelmente CBOActivity). Ajustar para que toda atividade tenha sector_id.
+
+Implementação recomendada (robusta e simples):
+- Criar uma entidade genérica: SectorActivity (ou Activity) com:
+  - id (PK)
+  - sector_id (FK -> sectors.id) NOT NULL
+  - name (string) NOT NULL
+  - description (string) NULL
+  - avg_minutes (int) NULL (quando fizer sentido)
+  - unit_type (string) NULL (ex.: "room", "task", "event" etc., opcional)
+  - is_active (bool)
+  - created_at/updated_at
+
+- Se já existe tabela governance_activities:
+  - Opção 1 (preferida): renomear/migrar para activities (ou sector_activities), adicionando sector_id e populando para setor “Governança”.
+  - Opção 2: manter governance_activities mas adicionar sector_id NOT NULL e tratá-la como “tabela de atividades multissetor” (mesmo nome antigo), porém o frontend deve passar a filtrar por sector_id.
+
+- Ajustar relação com Role:
+  - Como Role já tem sector_id, permitir mapeamento Role <-> Activity por uma tabela associativa:
+    role_activities:
+      - id
+      - role_id (FK roles.id)
+      - activity_id (FK activities.id)
+      - is_active
+  - Migrar o que existir em cbo_activities/governance_id para role_activities (se aplicável).
+  - Importante: garantir consistência: role.sector_id deve bater com activity.sector_id (validar na API).
+
+Endpoints:
+- GET /api/sectors (já existe) → usado para listar setores.
+- CRUD Activities:
+  - GET /api/activities?sector_id=#
+  - POST /api/activities  (body inclui sector_id)
+  - PUT /api/activities/{id}
+  - DELETE /api/activities/{id} (soft delete opcional: is_active=false)
+- CRUD RoleActivities:
+  - GET /api/roles/{role_id}/activities
+  - POST /api/roles/{role_id}/activities  (associa activity_id)
+  - DELETE /api/roles/{role_id}/activities/{activity_id}
+
+Validações:
+- Bloquear criação/edição de Activity sem sector_id.
+- Bloquear associação RoleActivity quando sector_id do Role != sector_id da Activity.
+
+A2) REGRAS: DIVIDIR EM (GLOBAL TRABALHISTA) E (OPERACIONAL POR SETOR)
+Hoje existe governance_rules misturando campos trabalhistas + operacionais.
+Refatorar para dois “domínios”:
+
+(1) LaborRules (GLOBAL, singleton)
+Tabela: labor_rules
+Campos (mínimos, derivados do que já existe em intermittent_rules e governance_rules):
+- id (PK) [mas sempre 1 registro “ativo”]
+- min_notice_hours (default 72)
+- max_week_hours (ex.: 44, conforme parametrização do negócio)
+- min_rest_hours_between_shifts
+- overtime_policy_json (opcional)
+- intermitente_guardrails_json (opcional)  # regras gerais de contrato intermitente
+- created_at/updated_at
+
+Endpoints:
+- GET /api/rules/labor
+- PUT /api/rules/labor  (atualiza singleton)
+
+(2) SectorOperationalRules (POR SETOR)
+Tabela: sector_operational_rules
+Campos:
+- id (PK)
+- sector_id (FK -> sectors.id) UNIQUE (1 por setor)
+- utilization_target_pct (meta aproveitamento)
+- buffer_pct
+- shift_templates_json (templates de turnos, almoço etc.)
+- productivity_params_json (ex.: tempos médios, tempos por tipo de atividade/room, metas)
+- indicators_json (KPIs/limiares do setor)
+- created_at/updated_at
+
+Endpoints:
+- GET /api/rules/operational?sector_id=#
+- PUT /api/rules/operational?sector_id=#
+- (Opcional) GET /api/rules/operational/all  (para UI carregar tudo e alternar client-side)
+
+MIGRAÇÃO DOS DADOS EXISTENTES:
+- Criar migração que:
+  1) Cria labor_rules e sector_operational_rules.
+  2) Se governance_rules já tem dados:
+     - Copiar campos “trabalhistas” para labor_rules (se existirem lá; se não, usar defaults do intermittent_rules).
+     - Copiar campos operacionais (utilization_target, cleaning_time_*, buffer, shifts) para sector_operational_rules do setor “Governança”.
+  3) Manter governance_rules por enquanto (compatibilidade), mas o código novo deve ler/escrever nas novas tabelas.
+- Atualizar services/validators para usar LaborRules como fonte global e SectorOperationalRules por setor.
+
+====================================================================================================
+PARTE B — FRONTEND (UI/UX)
+====================================================================================================
+
+B1) ATIVIDADES: AGORA PRECISAM DE SETOR
+Atualizar ActivitiesPage para:
+- Mostrar um seletor de setor no topo (dropdown com setores).
+- Listar atividades filtrando por sector_id.
+- No modal/form de criar/editar atividade:
+  - Campo obrigatório: setor (pré-selecionado pelo filtro; mas editável se necessário).
+- Exibir coluna “Setor” (opcional se filtro já selecionado).
+- Ajustar chamadas para usar /api/activities?sector_id=#
+
+B2) REGRAS: DIVIDIR EM DUAS ABAS/PÁGINAS
+Hoje existe GovernanceRulesPage. Alterar para um “Rules Hub” (ou renomear e dividir):
+- Criar RulesPage com duas abas:
+  (1) “Regras Trabalhistas (Global)”
+  (2) “Regras Operacionais (por Setor)”
+
+(1) Aba Regras Trabalhistas:
+- Form simples com campos de labor_rules (min_notice_hours etc.)
+- Salvar via PUT /api/rules/labor
+
+(2) Aba Regras Operacionais por Setor:
+- Carregar lista de setores: GET /api/sectors
+- Renderizar botões/abas por setor cadastrado (ex.: Governança, Recepção, Manutenção…)
+- Ao selecionar setor:
+  - Carregar rules do setor via GET /api/rules/operational?sector_id=#
+  - Exibir formulário com:
+    - utilization_target_pct
+    - buffer_pct
+    - tempos médios e parâmetros em productivity_params_json (UI amigável)
+    - templates de turnos em shift_templates_json (UI amigável)
+  - Salvar via PUT /api/rules/operational?sector_id=#
+
+IMPORTANTE:
+- A UI deve permitir que cada setor tenha parâmetros diferentes.
+- Se não existir registro para o setor ainda, criar automaticamente um default ao abrir (lazy-create) ou criar no backend quando o setor é criado.
+
+====================================================================================================
+PARTE C — COMPATIBILIDADE / AJUSTES SECUNDÁRIOS
+====================================================================================================
+
+C1) VALIDADORES E GERADOR DE ESCALA
+- Onde existir referência direta a “governance_rules”, trocar por:
+  - LaborRules (global) + SectorOperationalRules (sector específico).
+- O schedule_generator deve receber sector_id e buscar:
+  - parâmetros do setor (operacional)
+  - regras trabalhistas globais
+
+C2) DADOS EXISTENTES
+- Garantir que o setor “Governança” exista (seed se necessário).
+- Migrar atividades existentes de governança para activities com sector_id=Governança.
+
+C3) TESTES E LOGS
+- Adicionar logs/audit para:
+  - mudança de regras globais
+  - mudança de regras por setor
+  - mudança de sector_id em atividade (se permitido)
+- Criar pelo menos 3 testes simples (ou scripts) para:
+  1) criar atividade sem setor → deve falhar
+  2) associar role com activity de setor diferente → deve falhar
+  3) editar regra operacional do setor → persistir e refletir na UI
+
+====================================================================================================
+DEFINIÇÃO DE PRONTO (DoD)
+====================================================================================================
+
+- ActivitiesPage permite criar/editar/listar atividades por setor.
+- Regras estão divididas em:
+  - Regras Trabalhistas (global)
+  - Regras Operacionais (por setor, com botões/abas por setor)
+- Banco possui labor_rules e sector_operational_rules, com migração preservando governança.
+- Endpoints funcionando e integrados no frontend.
+- Nada do Data Lake V4 quebra (HP/checkin/checkout continuam processando).
+
+Execute as mudanças com cuidado, commitando incrementalmente e mantendo o sistema rodando.

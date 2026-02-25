@@ -1,0 +1,151 @@
+CONTEXTO DO PROJETO
+Você está trabalhando em um agente para gerar escalas de convocação (intermitentes) em hotel, inicialmente para Governança, mas com base multissetor (Recepção, Manutenção etc.). O PMS é o Desbravador e os relatórios são enviados diariamente em PDF/Excel.
+
+OBJETIVO DO PROMPT 1 (ENTREGA DO MÓDULO “DATA LAKE / INTELIGÊNCIA”)
+Implementar (ou ajustar) um módulo robusto de ingestão, reconhecimento e armazenamento (“Data Lake”) para relatórios do Desbravador, com auditoria e versionamento, capaz de operar diariamente SOMENTE com:
+1) HP do mês corrente (PDF) emitido no dia
+2) HP do próximo mês (PDF) emitido no dia
+3) Relatório diário CHECKIN (PDF) do dia
+4) Relatório diário CHECKOUT (PDF) do dia
+
+Além disso, no 1º dia do mês pode existir HP do mês anterior emitido naquele dia — o sistema deve aceitar e processar normalmente. O sistema não pode depender do nome do arquivo; deve reconhecer preferencialmente por CONTEÚDO.
+
+STACK / PADRÕES
+- Backend: FastAPI + SQLAlchemy (ou equivalente), com tabelas normalizadas.
+- Frontend: React (Vite) com páginas para upload, listagem, logs e visualização de estatísticas.
+- Tudo deve ser auditável (guardar metadados do upload e logs de parsing).
+- Criar endpoints claros e previsíveis para consumo no frontend.
+
+PARTE A — MODELO DE DADOS (OBRIGATÓRIO)
+Criar/garantir as seguintes entidades (ou equivalentes), com índices/constraints coerentes:
+
+1) Governaça e auditoria de uploads:
+- report_type: (id, code, name, category, detector_rules_json, column_mapping_json, active)
+- report_upload: (id, report_type_id, file_name, file_hash, file_format, generated_at, uploaded_at, uploaded_by, notes, parser_version, status)
+- report_extract_log: (id, report_upload_id, step, severity, message, payload_json, created_at)
+
+2) Ocupação por HP (precisa suportar “snapshots” evolutivos):
+- occupancy_snapshots: (id, target_date, generated_at, occupancy_pct, occupancy_total(optional), is_real, source_upload_id)
+- occupancy_latest: (target_date PK/unique, occupancy_pct, occupancy_total(optional), is_real, source_upload_id, generated_at)
+
+Regras:
+- HP é evolutivo (snapshot). Para a MESMA target_date haverá múltiplas previsões ao longo do tempo.
+- REAL tem precedência sobre FORECAST no occupancy_latest.
+- occupancy_latest deve refletir a “melhor versão” mais recente (maior generated_at) por target_date, separando REAL/FORECAST e privilegiando REAL quando disponível.
+
+3) Eventos por hora (Checkin/Checkout):
+- frontdesk_events_hourly: (id, op_date, weekday_pt, hour_timeline, event_type[checkin/checkout], count, source_upload_id)
+- opcional: frontdesk_event_rows (linhas cruas) se for útil para auditoria.
+
+4) Estatísticas derivadas:
+- hourly_distribution_stats: (metric_name, weekday_pt, hour_timeline, pct, n, last_updated_at, method)
+- weekday_bias_stats: (metric_name='occupancy', weekday_pt, bias_pp, n, std_pp, mae_pp, last_updated_at, method, method_params_json)
+
+PARTE B — DETECÇÃO DO TIPO DE RELATÓRIO (OBRIGATÓRIO)
+Implementar detector por CONTEÚDO:
+1) HP_DAILY:
+- Detectar por presença do texto:
+  “Relatório de Histórico e Previsão de Movimentação - Detalhado por tipo de hospedagem”
+  e também:
+  “Período: DD/MM/AAAA - DD/MM/AAAA”
+  e uma linha de emissão com padrão pt-BR “...-feira, D de <mês> de AAAA HH:MM”
+Fallback só em último caso: nome do arquivo contendo “HP”.
+
+2) CHECKIN_DAILY:
+- Detectar por presença de “Entrada DD/MM/AAAA” como âncora principal.
+
+3) CHECKOUT_DAILY:
+- Detectar por presença de “Saída DD/MM/AAAA” como âncora principal.
+
+Observação: nomes podem vir com erro (“CHECKOU” sem T). Não depender do nome.
+
+PARTE C — PARSER DO HP (OBRIGATÓRIO)
+Implementar parser de HP (PDF) que extraia:
+- generated_at (data/hora de emissão em português)
+- period_start / period_end
+- para cada linha diária: target_date, weekday, occupancy_pct (e se existir occupancy_total)
+
+REGRA “REAL ATÉ ONTEM / FORECAST A PARTIR DE HOJE”
+Definir:
+- as_of_date = date(generated_at)
+Para cada target_date no HP:
+- Se target_date < as_of_date => is_real=True (REAL)
+- Se target_date >= as_of_date => is_real=False (FORECAST)
+
+Persistência:
+- Inserir sempre em occupancy_snapshots.
+- Atualizar occupancy_latest garantindo:
+  (a) maior generated_at vence dentro do mesmo tipo
+  (b) REAL vence sobre FORECAST quando ambos existirem para a mesma target_date
+
+PARTE D — PARSER CHECKIN/CHECKOUT DIÁRIO (OBRIGATÓRIO)
+Implementar parser PDF robusto (sem manipulação manual) para extrair hora dos eventos:
+- Capturar anchor_date:
+  CHECKIN: regex “Entrada DD/MM/AAAA”
+  CHECKOUT: regex “Saída DD/MM/AAAA”
+- Capturar linhas com regex mínima (não depende do final da linha):
+  ^(\d{3})\s+(\S+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\s+(\d{2}:\d{2})\s+
+Retorna: UH, Tipo, otherDate, timeA, timeB
+Regra prática:
+- usar timeB como event_time (para checkin e checkout)
+
+NORMALIZAÇÃO “DIA OPERACIONAL”
+- CHECKOUT: janela 00–12 do próprio dia. hour_timeline = 0..11.
+- CHECKIN: janela operacional 14:00 do dia D até 12:00 do dia D+1:
+  Se event_time >= 14:00 => op_date = anchor_date; hour_timeline = hour (14..23)
+  Se event_time < 12:00 => op_date = anchor_date - 1; hour_timeline = hour + 24 (24..35)
+  Se 12:00 <= event_time < 14:00 => marcar como “early_checkin” e tratar por default como op_date=anchor_date, hour_timeline=hour (deixar configurável depois)
+
+Depois de persistir eventos do dia, atualizar:
+- frontdesk_events_hourly (agregação por op_date, weekday_pt e hour_timeline)
+- hourly_distribution_stats (matriz de percentuais por weekday e hour_timeline para checkin e checkout)
+
+PARTE E — ENDPOINTS BACKEND (OBRIGATÓRIO)
+Criar endpoints:
+1) POST /api/data-lake/upload
+- recebe arquivo (PDF/Excel), detecta report_type por conteúdo, processa, grava report_upload + logs + dados canônicos.
+- resposta deve incluir: tipo detectado, contagens de linhas extraídas, erros (se houver) e “status”.
+
+2) GET /api/data-lake/uploads
+- lista uploads e status.
+
+3) GET /api/data-lake/stats/hourly-distribution?metric=checkin|checkout
+- retorna matriz por weekday e hour_timeline com pct.
+
+4) GET /api/data-lake/stats/weekday-bias
+- retorna bias_pp por weekday (mesmo que inicialmente ainda vazio/seed).
+
+5) (Opcional) GET /api/data-lake/occupancy/latest?start=YYYY-MM-DD&end=YYYY-MM-DD
+- retorna série latest com is_real e generated_at.
+
+PARTE F — TELAS FRONTEND (OBRIGATÓRIO)
+Criar/ajustar páginas:
+1) “Inteligência / Data Lake”
+- Upload (drag&drop) + lista de uploads com status, tipo detectado, data de emissão (generated_at) e período.
+- Aba “Stats”: exibir tabelas simples para hourly_distribution (checkin/checkout) e weekday_bias.
+- Aba “Logs”: mostrar erros/avisos de parsing.
+
+REQUISITOS DE QUALIDADE
+- Detector por conteúdo é regra principal.
+- Parsing deve ser tolerante a espaços, acentos e pequenas variações.
+- Tudo com logs e status (não “falhar silenciosamente”).
+- Guardar file_hash para evitar duplicidade acidental.
+- Garantir que o HP diário suporte corretamente: mês corrente, próximo mês e (eventualmente) mês anterior no 1º dia do mês.
+
+TESTE COM AMOSTRAS
+Use como base de validação os PDFs diários de:
+- CHECKIN 01/12/2025, 02/12/2025, 03/12/2025
+- CHECKOUT 01/12/2025, 02/12/2025, 03/12/2025
+e HPs emitidos em 01/12 e 02/12 para mês corrente e próximo mês.
+O sistema deve:
+- detectar corretamente o tipo
+- extrair anchor_date e horas
+- preencher hourly stats
+- extrair generated_at do HP e classificar REAL/FORECAST por as_of_date
+- gravar snapshots e atualizar latest corretamente
+
+ENTREGA
+Ao final, rodar o sistema e validar via UI que:
+- uploads aparecem com status OK
+- stats horárias são calculadas
+- occupancy_latest e snapshots fazem sentido (REAL até ontem; FORECAST a partir de hoje).

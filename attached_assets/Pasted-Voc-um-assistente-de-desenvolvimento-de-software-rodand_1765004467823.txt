@@ -1,0 +1,117 @@
+Você é um assistente de desenvolvimento de software rodando no Replit. Quero que você crie a base de um sistema (backend + lógica de negócio, e se possível um front simples) para um AGENTE DE IA DE GESTÃO DE ESCALAS DE TRABALHO focado, inicialmente, no setor de GOVERNANÇA de um hotel.
+
+### 1. CONTEXTO DO NEGÓCIO
+
+- Operação: hotel de médio porte, com forte sazonalidade e variação de demanda.
+- Pickup médio: 4,7 dias. Por isso, as escalas são elaboradas semanalmente, sempre às quintas-feiras.
+- Período de escala: sempre de SEGUNDA a DOMINGO da semana seguinte.
+- Convocações: enviadas ainda na quinta-feira, garantindo pelo menos 72h de antecedência.
+- Pagamento: sempre na TERÇA-FEIRA da semana subsequente, em uma folha única para todos os intermitentes.
+
+- Há colaboradores fixos e colaboradores INTERMITENTES.
+- O objetivo é **minimizar o risco de descaracterização do contrato intermitente** na Justiça do Trabalho, variando turnos, horários, semanas de convocação e atividades, sem perder eficiência operacional.
+
+### 2. FOCO INICIAL
+
+Apesar de o agente futuramente cobrir todos os setores, neste primeiro momento queremos:
+
+1) Montar a **arquitetura geral** já preparada para vários setores (Governança, A&B, Recepção, etc.);  
+2) Implementar primeiro o **módulo de Governança**, para testar e ajustar a lógica.
+
+Portanto:
+- Estruture o projeto para ser modular por SETOR.
+- Mas implemente inicialmente apenas as entidades, endpoints e lógica necessários para o setor de GOVERNANÇA.
+
+### 3. ENFÂSE ABSOLUTA: CADASTRO DE COLABORADORES POR SETOR E FUNÇÃO
+
+Este é o coração do sistema. Preciso que o modelo de dados trate MUITO BEM:
+
+- Tabela/coleção de **Colaboradores**, com campos mínimos:
+  - id
+  - nome
+  - setor (ex.: GOVERNANÇA, A&B, RECEPÇÃO…)
+  - função/cargo (ex.: camareira, líder de governança, auxiliar)
+  - CBO
+  - tipo_vínculo (intermitente, efetivo)
+  - regime_trabalho (5x2, 6x1, 12x36, etc., quando aplicável)
+  - horas_mensais_alvo (ex.: 176h)
+  - dias_indisponíveis / preferências de folga
+  - restrições (não trabalha à noite, não pode carga pesada, etc.)
+  - data_última_semana_folga (para intermitentes)
+  - histórico_resumido de:
+    - horas_trabalhadas_últimas_semanas
+    - turnos_trabalhados (manhã/tarde/noite)
+    - se foi convocado ou não nas últimas semanas
+- Cada colaborador é SEMPRE associado a um setor principal e a uma função principal. Isso deve ser usado em todas as consultas.
+
+Crie também um cadastro de **Setores** e de **Funções/Cargos**, para não trabalhar somente com strings soltas.
+
+### 4. OUTRAS ENTIDADES IMPORTANTES (VISÃO GERAL)
+
+Prepare o modelo de dados para suportar:
+
+- QUARTOS / UNIDADES HABITACIONAIS
+  - id_quarto
+  - status (vago sujo, vago limpo, ocupado, bloqueado, etc.)
+  - tipo (single, double…)
+- ATIVIDADES DE GOVERNANÇA (com tempos médios)
+  - ex.: “Limpeza Vago Sujo” → 25 minutos
+  - ex.: “Arrumação Estada” → 10 minutos
+- ESCALA_SEMANAL
+  - semana (data_inicio, data_fim)
+  - setor (ex.: Governança)
+  - lista de jornadas geradas para cada colaborador
+- JORNADA_DIARIA (dentro da escala semanal)
+  - colaborador_id
+  - data
+  - horário_início
+  - horário_fim
+  - turno (manhã, tarde, noite)
+  - total_horas_previstas
+  - atividades_principais (lista, opcional)
+- CONVOCAÇÃO
+  - referência à escala e à jornada
+  - data_hora_envio
+  - data_hora_limite_resposta
+  - status (enviada, aceita, recusada, expirou)
+  - “justificativa_operacional” que amarre essa convocação ao contexto (ocupação, n° de quartos, etc.)
+
+### 5. REGRAS JURÍDICAS QUE PRECISAM SER SUPORTADAS
+
+O sistema DEVE permitir parametrizar e respeitar, principalmente para INTERMITENTES:
+
+- Convocações com antecedência mínima de 72h.
+- Alternância de turnos (não repetir sempre o mesmo turno por semanas seguidas).
+- Variação do número de horas trabalhadas por dia e por semana.
+- Semana de folga completa a cada 4–6 semanas (registrar e controlar).
+- Registro de ACEITE e RECUSA de convocações.
+- Evitar padrões contínuos (mesmos dias, mesmos horários, mesma carga) por muitas semanas seguidas.
+- Possibilidade de marcar períodos de 10 dias sem convocação (contagem de férias).
+
+Quero que você ESTRUTURE o código de forma que essas regras fiquem em um módulo de “regras_juridicas” ou similar, para ser ajustado no futuro.
+
+### 6. TECNOLOGIA
+
+Sugestão (pode ser ajustada se você tiver uma melhor, mas explique):
+
+- Backend: Python + FastAPI (ou Node + TypeScript + Express/Nest).
+- Banco de Dados: PostgreSQL.
+- ORM: SQLAlchemy / Prisma / Drizzle (o que você julgar mais prático no Replit).
+- Front simples: uma interface mínima (HTML/React) para:
+  - cadastrar colaboradores
+  - listar colaboradores de Governança
+  - cadastrar tempos médios de atividades (vago sujo, estada)
+  - rodar o cálculo de escala de Governança para uma semana
+
+### 7. O QUE FAZER AGORA
+
+1. Crie a estrutura inicial do projeto (pastas, dependências, configuração do banco).  
+2. Modele o banco com as entidades descritas, dando especial atenção ao cadastro de COLABORADORES por setor e função.  
+3. Crie endpoints básicos de:
+   - CRUD de Colaboradores
+   - CRUD de Setores
+   - CRUD de Funções/Cargos
+   - CRUD de Atividades de Governança (com tempo médio)
+4. Prepare um endpoint (stub) para “gerar_escala_governanca_semana”, que será detalhado em um próximo prompt.
+
+Explique rapidamente o que você fez e como está organizado o código.

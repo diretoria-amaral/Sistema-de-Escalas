@@ -1,0 +1,186 @@
+Quero que você implemente, neste projeto, o primeiro MÓDULO FUNCIONAL do agente de IA focado EXCLUSIVAMENTE no setor de GOVERNANÇA (housekeeping) do nosso hotel.
+
+### 1. CONTEXTO RÁPIDO (baseado no Prompt 1 que você já recebeu)
+- Ambiente: hotel com forte sazonalidade e pickup médio de 4,7 dias.
+- Escalas são elaboradas SEMANALMENTE às QUINTAS-FEIRAS.
+- Semana operacional: SEGUNDA a DOMINGO.
+- Convocações devem respeitar, no mínimo, 72 horas de antecedência.
+- Pagamento das convocações: sempre às TERÇAS-FEIRAS da semana seguinte.
+- Utilizamos colaboradores CLT e INTERMITENTES; o foco principal deste módulo é a boa gestão dos intermitentes, evitando descaracterização do contrato (previsibilidade excessiva, habitualidade, etc.).
+
+Este módulo deve ser AUTÔNOMO o suficiente para ser testado isoladamente, mas já preparado para integração futura com os demais setores.
+
+---
+
+### 2. OBJETIVO ESPECÍFICO DO MÓDULO GOVERNANÇA
+
+Implementar um sistema web (painel simples) que permita:
+
+1. **Cadastrar e gerenciar colaboradores da Governança** (efetivos e intermitentes).
+2. **Cadastrar parâmetros operacionais da semana** (ocupação prevista, quartos vagos sujos, estadas, feriados).
+3. **Definir regras e parâmetros de escala** em um painel interativo.
+4. **Calcular a necessidade de horas de trabalho de Governança** por dia (seg–dom), com base na carga de trabalho (limpeza).
+5. **Gerar uma escala semanal sugestiva** (proposta) apenas para Governança, respeitando:
+   - necessidades operacionais;
+   - regras jurídicas básicas para intermitentes;
+   - regras ajustadas pelo usuário no painel.
+
+---
+
+### 3. ESTRUTURA DE DADOS – COLABORADORES (GOVERNANÇA)
+
+Criar uma estrutura de dados (tabela em banco ou modelo em memória, dependendo do escopo que você estiver implementando) para **colaboradores da governança**, com pelo menos os seguintes campos:
+
+- `id`
+- `nome`
+- `tipo_contrato` (enum: "efetivo", "intermitente")
+- `cargo` (ex.: camareira, líder de governança, auxiliar, etc.)
+- `setor` (fixo: "Governança")
+- `velocidade_limpeza_vago_sujo` (fator multiplicador, opcional; default 25 minutos por quarto)
+- `velocidade_limpeza_estada` (fator multiplicador, opcional; default 10 minutos por quarto)
+- `carga_horaria_max_semana` (horas – p.ex. 44 para efetivos, outro valor para intermitentes)
+- `historico_horas_semana` (pelo menos para as últimas 4–6 semanas, para fins de rodízio e controle de folga)
+- `historico_turnos_semana` (para verificar repetição de padrões)
+- `ativo` (boolean)
+
+Não precisa implementar ainda toda a lógica avançada de histórico em produção, mas já deixe a estrutura preparada (campos definidos e manipuláveis).
+
+---
+
+### 4. PARÂMETROS OPERACIONAIS PARA GOVERNANÇA
+
+Criar uma tela ou seção de input para **cada semana** com:
+
+- Seleção da **semana-alvo** (data de segunda a domingo).
+- Para cada dia (Seg–Dom):
+  - `ocupacao_prevista_%`
+  - `num_quartos_vagos_sujos_previstos`
+  - `num_quartos_estada_previstos`
+  - indicador se é **feriado** (checkbox ou seleção: "normal" / "feriado" / "véspera de feriado").
+
+IMPORTANTE:  
+O campo de **feriado** será usado para:
+- permitir ao usuário informar que, naquele dia, o comportamento de demanda é diferente;
+- permitir, no futuro, aplicação de regras especiais (ex.: reforço de equipe, ou mudança de padrão de escala).  
+Por ora, pode ser usado como um fator de ajuste simples (ex.: multiplicar a demanda por um fator configurável no painel de regras).
+
+---
+
+### 5. PAINEL INTERATIVO DE REGRAS E PARÂMETROS
+
+Criar um **Painel de Regras e Parâmetros da Governança**, acessível via interface web, com ajustes pelo usuário, incluindo:
+
+1. **Tempos médios de limpeza (padrão do sistema)**
+   - Tempo padrão "Vago Sujo" (minutos) – default 25.
+   - Tempo padrão "Estada" (minutos) – default 10.
+
+2. **Fatores de ajuste para feriados**
+   - Fator multiplicador de demanda em feriado (ex.: 1.1, 0.9, etc.).
+   - Fator multiplicador para véspera de feriado.
+
+3. **Regras de carga horária por colaborador intermitente**
+   - Mínimo de horas semanais desejado (meta, não obrigatório).
+   - Máximo de horas semanais permitidas.
+   - Máximo de dias consecutivos de convocação.
+   - Intervalo desejado entre semanas convocadas (para folgas de 4–6 semanas).
+
+4. **Regras de aleatoriedade e alternância**
+   - Percentual máximo de repetição de mesmo turno para um colaborador nas últimas 3 semanas.
+   - Percentual máximo de repetição de combinação "dia da semana + turno" para um colaborador.
+   - Opção de “modo conservador” (varia mais os turnos) vs “modo flexível”.
+
+5. **Regras específicas para feriados**
+   - Permitir ou não convocar intermitentes em feriados.
+   - Preferência por efetivos em feriados (se aplicável).
+   - Regra textual (campo livre) que poderá ser exibida como lembrete ao RH.
+
+Esses parâmetros devem ser **salvos** (em memória ou em banco) e utilizados pelo motor de escala.
+
+---
+
+### 6. CÁLCULO DE NECESSIDADE DIÁRIA DE MÃO DE OBRA (GOVERNANÇA)
+
+Implementar uma função que, para cada dia da semana, faça:
+
+1. Calcular o **total de minutos** necessários:
+   - `minutos_vago_sujo = num_quartos_vagos_sujos_previstos * tempo_vago_sujo`  
+   - `minutos_estada = num_quartos_estada_previstos * tempo_estada`
+   - `minutos_totais = minutos_vago_sujo + minutos_estada`
+
+2. Converter em **horas necessárias**:
+   - `horas_necessarias = minutos_totais / 60`
+
+3. Aplicar ajustes se o dia for:
+   - feriado → multiplicar por fator_feriado;
+   - véspera de feriado → multiplicar por fator_vespera_feriado.
+
+4. Retornar, para cada dia, o mínimo de **horas totais de governança** necessárias para montagem da escala.
+
+Não precisa neste momento otimizar nível de “quem faz qual quarto”, apenas calcular a necessidade total de horas de governança no dia.
+
+---
+
+### 7. GERAÇÃO DA ESCALA SUGESTIVA (VERSÃO INICIAL E SIMPLES)
+
+Gerar uma **primeira versão simples**, mas funcional, da escala semanal da governança:
+
+- Entrada:  
+  - lista de colaboradores da governança (com tipo de contrato e limites de horas);  
+  - parâmetros da semana;  
+  - regras do painel;  
+  - horas necessárias por dia (resultado do cálculo acima).
+
+- Saída (exibida em tabela na interface):  
+  Para cada dia (Seg–Dom):
+  - lista de colaboradores sugeridos para convocação;
+  - turno sugerido (ex.: manhã, tarde, misto);
+  - carga de horas de cada colaborador nesse dia;
+  - total de horas alocadas vs horas necessárias.
+
+REGRAS PARA ESTA VERSÃO INICIAL:
+- Priorizar distribuição equilibrada entre intermitentes.
+- Tentar respeitar:
+  - máximo de horas semanais configurado;
+  - máximo de dias consecutivos;
+  - início da construção de padrões de alternância (não repetir sempre os mesmos no mesmo dia/turno).
+- Ainda não precisa implementar toda a lógica complexa de “risco jurídico”, mas estruturar o código para que possamos plugar isso depois.
+
+---
+
+### 8. INTERFACE
+
+Criar uma interface web simples (pode ser com Flask/FastAPI + template HTML ou um pequeno frontend em React, a seu critério), com:
+
+1. Tela de cadastro/edição de colaboradores da Governança.
+2. Tela de parâmetros da semana (ocupação, quartos, feriados).
+3. Painel Interativo de Regras (itens do tópico 5).
+4. Tela de geração/exibição da escala sugestiva, com:
+   - possibilidade de recalcular a escala ao alterar parâmetros;
+   - possibilidade de exportar a escala em formato tabela (JSON ou CSV, por exemplo).
+
+---
+
+### 9. QUALIDADE DO CÓDIGO
+
+- Organizar o código em módulos claros (`models`, `services`, `routes`, etc.).
+- Comentar as funções principais explicando o propósito.
+- Escrever o código de forma que seja fácil, depois, adicionar:
+  - lógica de auditoria;
+  - logs de decisões do agente;
+  - camadas de IA mais sofisticadas.
+
+---
+
+### 10. ENTREGA DESTA ETAPA
+
+Para esta primeira entega, quero:
+
+- Cadastro funcional de colaboradores de Governança.
+- Painel de Parâmetros da Semana (com feriados).
+- Painel Interativo de Regras.
+- Função de cálculo de horas necessárias por dia.
+- Geração de uma escala semanal simples, exibida em tabela na interface, utilizando as regras e parâmetros informados.
+
+Não precisa estar perfeito juridicamente ainda: o foco AGORA é montar a base lógica e estrutural do agente de governança, com a possibilidade de AJUSTAR as regras via interface para irmos evoluindo o modelo.
+
+Use nomes de variáveis e comentários em português claro.

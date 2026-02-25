@@ -1,0 +1,117 @@
+OBJETIVO
+Melhorar MUITO a UI/UX do menu “Turnos de Trabalho” SEM alterar campos nem regras de negócio.
+A listagem deve virar uma grade/tabela onde:
+- Cabeçalho: dias da semana de Segunda a Domingo
+- Cada linha: um Turno (nome + horários por dia)
+- Em cada célula/dia: exibir “Entrada – Saída”
+- Horário de Entrada ou Saída marcados como MANDATORY devem aparecer em cor diferente (destaque visual)
+- Ações: Editar e Excluir/Desativar devem estar disponíveis na linha do turno
+
+No formulário (modal) “Novo/Editar Turno”:
+- melhorar layout e apresentação (sem mudar campos)
+- manter “Replicar horários da Segunda para todos os dias”
+- adicionar botão “Limpar” por dia (na linha do dia), para deixar o dia totalmente em branco (sem horários)
+
+REFERÊNCIA DE CÓDIGO (atual)
+Frontend: frontend/src/pages/WorkShiftManagement.tsx
+
+========================================================
+1) LISTAGEM EM FORMATO GRADE (Seg–Dom no cabeçalho)
+========================================================
+
+SUBSTITUIR o layout atual de cards por uma tabela/grade:
+
+Tabela:
+Colunas:
+- Turno (Nome + status)
+- Seg | Ter | Qua | Qui | Sex | Sáb | Dom
+- Ações
+
+Conteúdo das células (por dia):
+- Se o turno tiver start_time/end_time no dia: exibir “HH:MM – HH:MM”
+- Se o dia estiver em branco: exibir “—” com cor neutra
+
+DESTAQUE MANDATÓRIO
+- Se start_constraint == MANDATORY: pintar o horário de entrada (HH:MM) com destaque (ex.: amber/laranja)
+- Se end_constraint == MANDATORY: pintar o horário de saída (HH:MM) com destaque
+- Se ambos mandatórios: ambos destacados
+- Se flexíveis: cor padrão
+
+EXEMPLO VISUAL (não literal)
+Seg: 08:00 – 17:00  (08:00 em destaque se obrigatório, 17:00 em destaque se obrigatório)
+
+AÇÕES NA LINHA
+- Botão “Editar”: abre modal com o turno
+- Botão “Excluir” (ou “Desativar”):
+  - Preferência: “Excluir” = soft delete (is_active=false), com confirmação
+  - Manter também “Ativar” quando estiver inativo
+- Mostrar badge “Ativo/Inativo” ao lado do nome
+
+USABILIDADE
+- Cabeçalho fixo (sticky) para dias
+- Tabela com scroll horizontal em telas pequenas
+- Tooltip opcional quando houver intervalo (exibir em hover: “Intervalo: 12:00–13:00”)
+  (não precisa mostrar intervalo no grid, apenas entrada/saída)
+
+========================================================
+2) MODAL NOVO/EDITAR TURNO — melhorar layout (sem mudar campos)
+========================================================
+
+O modal atual já tem tabela por dias, mas precisa:
+- ficar mais limpo, com espaçamento, títulos e botões consistentes
+- manter os mesmos campos: início, saída intervalo, retorno intervalo, final, constraints
+
+MANTER:
+- botão “Replicar horários da Segunda para todos os dias” (copyFirstDayToAll)
+
+ADICIONAR:
+- botão “Limpar” por dia, dentro da linha do dia (coluna final “Ações”):
+  Ao clicar “Limpar”:
+  - start_time = ''
+  - break_out_time = ''
+  - break_in_time = ''
+  - end_time = ''
+  - start_constraint = FLEXIBLE (reset opcional, recomendado)
+  - end_constraint = FLEXIBLE (reset opcional, recomendado)
+  Esse dia fica totalmente em branco.
+
+Também adicionar um botão “Limpar todos os dias” (opcional) no topo do modal, ao lado do replicar, se for simples.
+
+========================================================
+3) EDIÇÃO DO TURNO: salvar e refletir na grade
+========================================================
+
+- Ao salvar, recarregar a lista e manter o setor selecionado.
+- Sem “tela branca”: usar try/catch e exibir toast (substituir alert se já houver sistema de toast).
+
+========================================================
+4) EXCLUSÃO / DESATIVAÇÃO
+========================================================
+
+Atualmente existe toggle de ativo/inativo.
+Implementar “Excluir” com confirmação e ação equivalente a:
+- workShiftsApi.update(shift.id, { is_active:false })
+OU endpoint delete (se existir) chamando soft delete.
+
+Na grade:
+- por padrão exibir apenas ativos
+- adicionar toggle “Mostrar inativos”
+  - se ligado: mostrar inativos com estilo visual atenuado
+
+========================================================
+5) CRITÉRIOS DE ACEITE
+========================================================
+
+PASSA se:
+- Lista virou grade: linha = turno, colunas = Seg–Dom
+- Em cada célula aparece Entrada–Saída
+- Horários mandatórios têm cor diferente (entrada e/ou saída)
+- Editar e Excluir/Desativar funcionam
+- Modal está mais agradável e mantém campos
+- “Replicar segunda→todos” funciona
+- Cada linha (dia) no modal tem botão “Limpar” e ele deixa o dia em branco
+
+NÃO fazer:
+- Alterar modelo do banco
+- Alterar campos existentes
+- Alterar lógica de validação backend

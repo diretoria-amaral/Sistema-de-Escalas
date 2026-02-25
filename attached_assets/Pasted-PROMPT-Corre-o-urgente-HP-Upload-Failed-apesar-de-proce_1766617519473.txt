@@ -1,0 +1,157 @@
+PROMPT — Correção urgente: HP Upload “Failed” apesar de processamento OK (copiar/colar)
+
+Você é o engenheiro responsável por corrigir um bug crítico no módulo de Inteligência (Data Lake) do agente. O problema:
+
+O upload de arquivos HP (PDF) aparece com status “Failed” na lista de uploads.
+
+Porém, ao clicar em processar, o sistema informa sucesso e confiança 100%.
+
+Minha hipótese: o pipeline de extração não está persistindo corretamente (ou está lançando exceção após detectar/parsear), e o status do report_upload fica inconsistente.
+
+Objetivo
+
+Identificar exatamente em que etapa o fluxo quebra (detecção, extração, normalização, persistência, deduplicação, atualização de views).
+
+Corrigir para que:
+
+Se extraiu e persistiu ao menos 1 linha de ocupação → status final = PROCESSED (ou equivalente).
+
+Se não persistiu nada → status final = FAILED com motivo claro.
+
+Garantir logs/auditoria suficientes para o usuário entender o erro sem precisar do console.
+
+1) Diagnóstico obrigatório (instrumentação)
+
+Implemente logs estruturados e persistentes (DB) em report_extract_log (ou tabela equivalente), com:
+
+report_upload_id
+
+step (DETECT, PARSE_HEADER, PARSE_ROWS, NORMALIZE, UPSERT_SNAPSHOTS, UPDATE_LATEST, UPDATE_STATS, FINALIZE)
+
+severity (INFO/WARN/ERROR)
+
+message
+
+payload_json (contagens, exceções, trechos relevantes)
+
+Importante: se houver exceção, registrar stacktrace resumido em payload_json e marcar status FAILED somente ao final, não no meio.
+
+2) Checagens típicas (causas prováveis)
+
+Verifique e corrija os pontos abaixo (um a um), pois costumam causar esse sintoma “detecta OK mas falha no final”:
+
+2.1 Parsing do generated_at (Português) e timezone
+
+O HP possui emissão em PT (“terça-feira, 2 de dezembro de 2025 03:32”).
+
+Se o parse falha, o resto pode até “rodar” mas falhar na persistência.
+
+Exigir parser robusto com dicionário de meses pt.
+
+Se generated_at não for extraído: logar ERROR e abortar com mensagem clara.
+
+2.2 Parsing do “Período” com hífen/en-dash/em-dash
+
+Já houve ajuste para aceitar -, – e —.
+
+Confirmar por testes: regex pega todos os casos.
+
+2.3 Extração das linhas diárias e conversão de percentuais
+
+Percentual pode vir com vírgula decimal (“17,36%”).
+
+Converter corretamente para float (17.36).
+
+Se nenhum dia for extraído: logar quantas linhas candidatas existiam e por que foram descartadas.
+
+2.4 Persistência / conflito de chave / transação
+
+Pode estar detectando e calculando, mas falhando ao inserir:
+
+constraint única errada,
+
+tipos incompatíveis (date vs datetime),
+
+NULL em coluna obrigatória,
+
+transação rollback.
+
+Implementar transação:
+
+UPSERT em occupancy_snapshots por chave (target_date, generated_at) (já descrito).
+
+occupancy_latest deve ser atualizado por query determinística e idempotente.
+
+2.5 Inconsistência de status
+
+Corrigir a máquina de estados do upload:
+
+UPLOADED → PROCESSING → PROCESSED | FAILED
+
+Não deixar “FAILED” persistido se o processamento finalizou com sucesso.
+
+Se existe “confiança 100%”, isso não pode coexistir com status FAILED.
+
+3) Regras de “sucesso”
+
+Defina “sucesso” do HP assim:
+
+Pelo menos 1 registro gravado em occupancy_snapshots para aquele report_upload_id → PROCESSED.
+
+Também gravar contadores:
+
+rows_extracted
+
+rows_inserted
+
+rows_skipped
+
+days_real_count
+
+days_forecast_count
+
+4) Tela de Uploads: feedback de erro útil
+
+Na listagem de uploads, exibir:
+
+status
+
+rows_inserted
+
+“último erro” (message do último log ERROR)
+
+botão “ver logs” (modal)
+
+5) Testes obrigatórios (com meus arquivos)
+
+Crie testes com pelo menos 2 HPs reais (ex.: “HP NOVEMBRO.2025 - 01.12.2025.pdf” e “HP DEZEMBRO.2025 - 02.12.2025.pdf”) garantindo:
+
+detecta HP_DAILY por conteúdo
+
+extrai generated_at e período
+
+grava snapshots
+
+atualiza latest
+
+status PROCESSED
+
+6) Entregáveis
+
+Correção no backend + migrações se necessário.
+
+Ajuste no frontend para refletir o status real e mostrar logs.
+
+Relatório no README/replit.md com: causa raiz encontrada + solução + como validar.
+
+Critério de aceitação (final)
+
+Após upload e processamento de um HP válido:
+
+status = PROCESSED
+
+rows_inserted > 0
+
+occupancy_latest contém dias do período
+
+logs não contém ERROR (ou contém apenas WARN explicando skips)

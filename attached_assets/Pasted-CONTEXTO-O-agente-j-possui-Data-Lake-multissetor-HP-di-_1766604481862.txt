@@ -1,0 +1,156 @@
+CONTEXTO
+O agente já possui:
+- Data Lake multissetor (HP diário mês corrente e próximo mês, CHECKIN e CHECKOUT diários)
+- Regra REAL vs FORECAST por as_of_date
+- Forecast Run / Baseline semanal (congelado na sexta-feira)
+- Regras Trabalhistas Globais
+- Regras Operacionais por Setor
+- Arquitetura multissetor e navegação (Prompt 12)
+
+OBJETIVO DO PROMPT 13
+Criar o módulo de CALENDÁRIO ANUAL e FERiados, integrando-o:
+1) à projeção de ocupação (Forecast Run),
+2) ao cálculo de demanda de mão de obra,
+3) à geração de escalas e convocações.
+
+Este módulo deve ser genérico, multissetor e auditável.
+
+---
+
+# 1) CONCEITO DE CALENDÁRIO OPERACIONAL
+
+Criar um "Calendário Operacional" com validade anual, contendo:
+- Feriados nacionais
+- Feriados estaduais
+- Feriados municipais
+- Datas internas da empresa (ex.: inventário, manutenção geral, eventos próprios)
+
+Cada data deve permitir:
+- Tipo de feriado (Nacional / Estadual / Municipal / Interno)
+- Abrangência:
+  - Global (todos os setores)
+  - Específica por setor
+- Impacto operacional configurável:
+  - Redução de produtividade (%)
+  - Aumento de demanda (%)
+  - Bloqueio de convocação (opcional)
+  - Ajuste de horários (ex.: turnos reduzidos)
+
+---
+
+# 2) BACKEND — MODELAGEM E REGRAS
+
+## 2.1 Nova entidade: operational_calendar
+Campos mínimos:
+- id
+- date (YYYY-MM-DD)
+- name
+- holiday_type
+- scope (GLOBAL / SECTOR)
+- sector_id (nullable)
+- productivity_factor (ex.: 0.8 = -20%)
+- demand_factor (ex.: 1.2 = +20%)
+- block_convocations (boolean)
+- notes
+- created_at / updated_at
+
+## 2.2 Regras de precedência
+- Se houver regra GLOBAL e regra por SETOR no mesmo dia:
+  - Aplicar primeiro a GLOBAL
+  - Depois sobrescrever/ajustar com a regra do SETOR
+- Registrar sempre o fator final aplicado no cálculo (auditável)
+
+---
+
+# 3) INTEGRAÇÃO COM FORECAST RUN / BASELINE
+
+Ao gerar um Forecast Run (baseline da sexta-feira):
+1) O sistema deve verificar se existem datas especiais (calendário) no intervalo da semana seguinte.
+2) Para cada dia:
+   - Ajustar a projeção de ocupação (se aplicável)
+   - Ajustar a produtividade do setor
+3) Registrar no Forecast Run:
+   - occupancy_raw
+   - occupancy_adjusted
+   - calendar_factor_applied
+   - source = "calendar"
+
+IMPORTANTE:
+- O baseline continua congelado.
+- Ajustes de calendário fazem parte do baseline, se conhecidos na sexta.
+- Eventos inseridos depois da sexta devem entrar como "Adjustment Run".
+
+---
+
+# 4) INTEGRAÇÃO COM GERAÇÃO DE ESCALAS
+
+No cálculo de demanda de mão de obra:
+- Aplicar os fatores do calendário ANTES do cálculo de:
+  - número de colaboradores
+  - distribuição de horários
+- Exemplo:
+  - Produtividade padrão: 100%
+  - Feriado municipal: produtividade 80%
+  → necessidade de mais horas / mais colaboradores
+
+Se block_convocations = true:
+- Sistema não gera escala automaticamente
+- Exibe alerta claro na UI
+
+---
+
+# 5) FRONTEND — TELAS E UX
+
+## 5.1 Nova página: "Calendário Operacional"
+Localização no menu:
+Operação → Calendário Anual
+
+Funcionalidades:
+- Visualização em formato calendário (mês)
+- Lista filtrável por:
+  - ano
+  - tipo de feriado
+  - setor
+- CRUD completo de datas especiais
+- Indicação visual:
+  - Global vs Setorial
+  - Tipo de impacto (ícones ou badges)
+
+## 5.2 Integração visual
+- Ao visualizar um Forecast Run:
+  - Indicar dias impactados por calendário
+- Ao gerar escala:
+  - Mostrar aviso: “Dia com regra especial aplicada”
+
+---
+
+# 6) AUDITORIA E RASTREABILIDADE
+
+Registrar no audit_log:
+- CALENDAR_EVENT_CREATED
+- CALENDAR_EVENT_UPDATED
+- CALENDAR_EVENT_DELETED
+- CALENDAR_APPLIED_TO_FORECAST
+- CALENDAR_APPLIED_TO_SCHEDULE
+
+Campos mínimos:
+- timestamp
+- user
+- entity (calendar / forecast_run / schedule)
+- payload resumido
+
+---
+
+# 7) CRITÉRIOS DE ACEITAÇÃO
+
+Este prompt será considerado concluído quando:
+1) Eu conseguir cadastrar feriados globais e por setor.
+2) Esses feriados impactarem a projeção e a escala.
+3) O Forecast Run mostrar claramente quando um fator de calendário foi aplicado.
+4) O sistema impedir convocações quando configurado.
+5) Tudo funcionar sem quebrar o Data Lake e Forecast Run existentes.
+
+RESTRIÇÕES
+- NÃO reescrever o Data Lake.
+- NÃO criar lógica hardcoded para governança.
+- Tudo deve ser multissetor desde a base.

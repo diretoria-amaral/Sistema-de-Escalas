@@ -1,0 +1,253 @@
+PROMPT — Onda atual / Item 3: OPERAÇÃO → PROGRAMAÇÃO DE ATIVIDADES (copiar/colar)
+
+Você está trabalhando em um agente web (backend + frontend) para escalas e convocações intermitentes, já com Data Lake (HP + checkin/checkout), regra REAL vs FORECAST, Forecast Runs/Baseline e cadastros (setores, cargos, colaboradores, atividades, regras etc.).
+Agora implemente o módulo “Operação → Programação de atividades”.
+Objetivo: permitir que o usuário defina a programação operacional (demanda e “grade” de execução) por setor e dia, para uma semana (Mon–Sun), vinculada a um Baseline de Planejamento (Forecast Run). Essa programação será o insumo para o módulo de Turnos/Templates e Geração de Escala.
+
+1) Conceitos e Regras do Módulo
+
+“Programação de atividades” é diferente de “escala”:
+
+Programação = o plano do trabalho por setor/dia (quantidade, carga, janela, prioridade).
+
+Escala = alocação de colaboradores e turnos para atender a programação.
+
+A programação deve ser por setor e por semana, e idealmente vinculada a um baseline.
+
+Deve suportar dois modos:
+
+Automático (recomendado): gera uma programação sugerida com base em occupancy_latest, checkins/checkouts e parâmetros do setor.
+
+Manual: usuário cria/edita itens (com auditoria).
+
+Deve permitir revisões diárias (ajustes), sem apagar o baseline original:
+
+Baseline = “plano congelado na sexta”
+
+Adjustments = “replanejamento” com motivo, data e autor, mantendo histórico.
+
+2) Banco de Dados (migrations obrigatórias)
+
+Crie as tabelas abaixo (PostgreSQL). Se você já tiver algo parecido, adapte sem quebrar compatibilidade:
+
+2.1 forecast_run (se já existe, apenas use)
+
+id
+
+run_date (date)
+
+week_start (date) / week_end (date)
+
+type enum: BASELINE | ADJUSTMENT
+
+baseline_id (nullable, self-fk) → ajustes apontam para o baseline
+
+notes / created_by / created_at
+
+2.2 activity_program_week
+
+id
+
+sector_id (fk)
+
+forecast_run_id (fk) ← aponta para baseline ou adjustment
+
+week_start (date)
+
+status enum: DRAFT | APPROVED | LOCKED
+
+created_at, created_by
+
+updated_at, updated_by
+
+UNIQUE(sector_id, forecast_run_id, week_start)
+
+2.3 activity_program_item
+Cada item representa uma necessidade operacional.
+
+id
+
+program_week_id (fk → activity_program_week)
+
+sector_id (fk, redundante para filtros rápidos)
+
+activity_id (fk) OBRIGATÓRIO (atividade já vinculada a setor)
+
+op_date (date) — dia da semana
+
+window_start (time, nullable) — quando pode iniciar
+
+window_end (time, nullable) — quando deve terminar
+
+quantity (int, default 1) — ex.: nº de “execuções”
+
+workload_minutes (int, nullable) — carga total estimada em minutos
+
+priority smallint (1..5)
+
+source enum: AUTO | MANUAL
+
+drivers_json jsonb (ex.: {occ_adj, checkouts, stayovers, regra_usada, buffer})
+
+notes text nullable
+
+created_at, created_by, updated_at, updated_by
+
+2.4 audit_log (se já existe, use)
+Registrar create/update/delete e “aprovação” do plano.
+
+3) Serviços (backend)
+
+Crie um serviço activity_program_service.py com:
+
+3.1 Criar programação (baseline)
+
+Input: sector_id, forecast_run_id (baseline), week_start
+
+Se mode=AUTO, gerar itens sugeridos:
+
+Para governança (se setor for Governança): criar itens por dia com base em:
+
+occupancy (real/forecast) do período
+
+estimativas de departures, stayovers se existir; se não existir, usar aproximação pela ocupação e regras do setor
+
+criar pelo menos 1 item “Limpeza vago sujo” + 1 item “Limpeza estadia” por dia, com workload_minutes calculado e drivers_json explicando o cálculo
+
+Para outros setores: criar estrutura mínima genérica (placeholder) e permitir edição manual (até termos modelos)
+
+Se mode=MANUAL, cria vazio em DRAFT.
+
+3.2 Atualizar itens
+
+CRUD completo: create/update/delete activity_program_item
+
+Validações:
+
+activity pertence ao setor do program
+
+op_date dentro da semana do program
+
+window_start < window_end quando ambos existirem
+
+quantity >= 1
+
+workload_minutes >= 0
+
+3.3 Aprovar / Bloquear
+
+APPROVE: congela o plano daquela semana para servir de base para Turnos/Templates e Escala.
+
+LOCKED: impedir edições (apenas admins). Ajustes devem ser feitos por “Adjustment Run”.
+
+3.4 Criar Adjustment (replanejamento diário)
+
+Dado um baseline, criar forecast_run do tipo ADJUSTMENT, copiar a programação anterior para activity_program_week e permitir edições.
+
+Deve registrar reason e created_at.
+
+4) API (endpoints)
+
+Implemente endpoints REST (ou FastAPI) padrão:
+
+GET /activity-program/sectors (lista setores)
+
+GET /activity-program/weeks?sector_id=&week_start=&forecast_run_id=
+
+POST /activity-program/week (cria program_week, mode AUTO/MANUAL)
+
+GET /activity-program/week/{id} (detalhe + itens)
+
+POST /activity-program/week/{id}/items (add item)
+
+PUT /activity-program/items/{item_id} (edit item)
+
+DELETE /activity-program/items/{item_id}
+
+POST /activity-program/week/{id}/approve
+
+POST /activity-program/week/{id}/lock
+
+POST /activity-program/baseline/{forecast_run_id}/adjustment (cria run + copia programação)
+
+5) Frontend (tela “Operação → Programação de atividades”)
+
+Criar uma página dedicada (ex.: ActivityProgrammingPage.tsx) com:
+
+5.1 Controles superiores
+
+seletor de setor (dropdown)
+
+seletor de semana (week_start)
+
+seletor de Forecast Run (baseline vs adjustment)
+
+botões:
+
+“Gerar Automático”
+
+“Criar Manual”
+
+“Criar Ajuste Diário” (cria adjustment a partir do baseline)
+
+“Aprovar”
+
+“Bloquear”
+
+mostrar status: DRAFT/APPROVED/LOCKED
+
+5.2 Grade semanal
+
+Tabela por dia (colunas: SEG..DOM) ou lista por dia com cards
+
+Cada item mostra:
+
+atividade (nome)
+
+janela (início/fim)
+
+quantidade
+
+carga (minutos)
+
+prioridade
+
+origem (AUTO/MANUAL)
+
+botão “ver drivers” (abre modal com drivers_json e explicação)
+
+5.3 Edição
+
+modal/form para criar/editar item
+
+deletar item
+
+filtros por atividade/prioridade
+
+5.4 Auditoria
+
+no detalhe do week: mostrar “criado por”, “última alteração”, e link para logs (se disponível).
+
+6) Integração com a próxima etapa (Turnos/Templates e Escala)
+
+A programação aprovada deve ser consumível por:
+
+gerador de turnos/templates
+
+gerador de escala
+
+Portanto, exponha um endpoint/serviço interno:
+
+get_programming_inputs(sector_id, week_start, forecast_run_id) retornando itens agregados por dia e carga total.
+
+7) Critérios de aceitação
+
+Consigo criar um baseline semanal por setor, gerar itens automáticos (governança) e editar manualmente.
+
+Consigo aprovar/bloquear.
+
+Consigo criar adjustment run e manter histórico sem apagar baseline.
+
+Tudo com auditoria mínima e validações.
+
+Implemente com consistência do projeto existente, sem quebrar rotas atuais. Se faltar algum arquivo/estrutura, crie o mínimo necessário.

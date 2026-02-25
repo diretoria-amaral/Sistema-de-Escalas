@@ -1,0 +1,305 @@
+CONTEXTO
+Estou construindo um sistema (agente) para gestão de mão de obra intermitente em hotel com sazonalidade. O agente deve operar diariamente a partir de relatórios do PMS Desbravador (Excel e/ou PDF). O foco inicial do projeto (futuro) é escala por setor (Governança, Recepção, Manutenção etc.), mas ESTE PROMPT 1 É EXCLUSIVAMENTE PARA: base de dados robusta + ingestão automática de relatórios + estatísticas (projeção e picos horários) + telas/endpoints + auditoria.
+
+REQUISITO OPERACIONAL MÍNIMO (O SISTEMA DEVE FUNCIONAR SOMENTE COM ESTES UPLOADS DIÁRIOS)
+Diariamente serão enviados (idealmente 4 arquivos):
+1) HP do mês corrente (emitido no dia)
+2) HP do próximo mês (emitido no dia)
+3) Relatório diário de CHECKIN (do dia) — PDF
+4) Relatório diário de CHECKOUT (do dia) — PDF
+Observação: no 1º dia do mês pode existir também HP do mês anterior emitido naquele dia (consolidação). O sistema deve aceitar qualquer HP válido pelo conteúdo, independente do nome do arquivo.
+
+OBJETIVO DO PROMPT 1
+Implementar:
+A) “Data Lake” interno + modelo de dados canônico e auditável.
+B) Tela única de Upload/Inteligência para receber relatórios.
+C) Reconhecimento automático do tipo de relatório (report_type detector) por CONTEÚDO.
+D) Parsers robustos para:
+   - HP diário evolutivo (PDF) -> ocupação diária com conceito REAL vs FORECAST por “as-of”.
+   - CHECKIN diário (PDF) -> eventos por hora.
+   - CHECKOUT diário (PDF) -> eventos por hora.
+E) Persistência + versionamento de parser + logs de extração.
+F) Estatísticas atualizadas automaticamente:
+   - Bias por dia da semana (erro em pontos percentuais, pp) para ajustar projeção.
+   - Distribuição horária (% por hora) de checkins/checkouts por dia da semana.
+G) Endpoints/API e UI para consultar:
+   - uploads e status
+   - dados normalizados
+   - estatísticas
+   - projeção ajustada (apenas cálculo e tabela; a escala por setor vem no Prompt 2)
+H) Possibilidade de “bootstrap” (seed) das estatísticas iniciais (bias_pp por weekday) sem precisar reenviar todos históricos.
+
+TECNOLOGIA
+Você pode escolher stack, mas prefiro backend Python (FastAPI) + banco (Postgres/SQLite) e frontend (React/Vite) caso já exista. Priorize clareza, auditabilidade e facilidade de evoluir para novos relatórios/setores. Código limpo, modular, testes mínimos para parsers.
+
+=====================================================
+1) MODELO DE DADOS (OBRIGATÓRIO: ROBUSTO E AUDITÁVEL)
+=====================================================
+
+1.1. Entidades básicas de governança de relatórios (data lake)
+- report_type:
+  id (pk)
+  code (ex: HP_DAILY, CHECKIN_DAILY, CHECKOUT_DAILY)
+  name
+  category (ex: OCCUPANCY, FRONTDESK_EVENTS)
+  detector_rules_json (como detectar por conteúdo)
+  mapping_json (mapeamento de colunas/regex)
+  active (bool)
+  created_at
+
+- report_upload:
+  id (pk)
+  report_type_id (fk)
+  file_name
+  file_hash (sha256)
+  file_format (pdf/xlsx/csv)
+  generated_at (data/hora detectada no relatório, se existir)
+  uploaded_at
+  uploaded_by (opcional)
+  status (PENDING/PARSED/FAILED)
+  parser_version
+  notes
+
+- report_extract_log:
+  id
+  report_upload_id (fk)
+  step (DETECT/EXTRACT/NORMALIZE/PERSIST/DERIVE)
+  severity (INFO/WARN/ERROR)
+  message
+  payload_json
+  created_at
+
+1.2. Ocupação (HP) — snapshot + latest (para auditoria e facilidade)
+- occupancy_snapshots:
+  id
+  target_date (date)
+  generated_at (datetime)
+  period_start (date)
+  period_end (date)
+  occupancy_pct (float 0..100)
+  occupancy_total (int, opcional se existir)
+  is_real (bool)
+  is_forecast (bool)
+  source_upload_id (fk report_upload)
+  created_at
+
+- occupancy_latest:
+  target_date (pk)
+  latest_real_generated_at
+  latest_real_occupancy_pct
+  latest_forecast_generated_at
+  latest_forecast_occupancy_pct
+  updated_at
+
+Regras:
+- Real e Forecast podem coexistir para a mesma target_date (por snapshots), mas “latest” deve guardar sempre a melhor versão.
+- REAL tem precedência para análises do passado.
+
+1.3. Eventos por hora (checkins/checkouts)
+- frontdesk_events:
+  id
+  event_type (CHECKIN/CHECKOUT)
+  anchor_date (date)  # data âncora do relatório (“Entrada dd/mm/aaaa” ou “Saída dd/mm/aaaa”)
+  event_time (time)   # hora capturada do relatório
+  uh (string/int opcional)
+  room_type (string opcional)
+  other_date (date opcional)
+  time_a (time opcional)
+  time_b (time opcional)
+  source_upload_id (fk)
+  created_at
+
+- frontdesk_events_hourly_agg (derivado):
+  id
+  op_date (date)              # data operacional (ver regra abaixo)
+  weekday_pt (SEG..DOM)
+  hour_timeline (int)         # checkout: 0..11 ; checkin: 14..35 (00..11 do dia seguinte representado como 24..35)
+  event_type (CHECKIN/CHECKOUT)
+  count_events (int)
+  source_window (ex: “auto_agg”)
+  updated_at
+
+1.4. Estatísticas (aprendizado contínuo)
+- weekday_bias_stats:
+  id
+  metric_name (ex: OCCUPANCY_BIAS_PP)
+  weekday_pt
+  bias_pp (float)     # média do erro em pontos percentuais (real - previsto)
+  n (int)
+  std_pp (float, opcional mas recomendado)
+  mae_pp (float, opcional mas recomendado)
+  method (MEAN_INCREMENTAL ou EWMA)
+  method_params_json (ex: {"alpha":0.2})
+  last_updated_at
+
+- hourly_distribution_stats:
+  id
+  metric_name (CHECKIN_PCT ou CHECKOUT_PCT)
+  weekday_pt
+  hour_timeline (int)
+  pct (float 0..100)
+  n (int) # número de dias usados
+  last_updated_at
+  method
+
+=====================================================
+2) DETECÇÃO AUTOMÁTICA (REPORT_TYPE DETECTOR)
+=====================================================
+
+2.1 HP_DAILY (por conteúdo)
+Detectar como HP_DAILY se o PDF contiver simultaneamente:
+- “Relatório de Histórico e Previsão de Movimentação” (ou muito próximo)
+- “Detalhado por tipo de hospedagem”
+- “Período: dd/mm/aaaa - dd/mm/aaaa”
+E contiver a linha de emissão em português com padrão “...-feira, D de <mês> de AAAA HH:MM”.
+
+2.2 CHECKIN_DAILY (por conteúdo)
+Detectar como CHECKIN_DAILY se contiver a âncora:
+- “Entrada dd/mm/aaaa”
+e NÃO tiver “Saída dd/mm/aaaa” como âncora principal.
+
+2.3 CHECKOUT_DAILY (por conteúdo)
+Detectar como CHECKOUT_DAILY se contiver a âncora:
+- “Saída dd/mm/aaaa”
+e NÃO tiver “Entrada dd/mm/aaaa” como âncora principal.
+
+Fallback:
+- Se detecção por conteúdo falhar, usar nome do arquivo (contém CHECKIN/CHECKOUT/HP), mas nunca depender apenas do nome.
+
+=====================================================
+3) PARSER DO HP DIÁRIO (PDF) — REGRA REAL VS FORECAST (“AS-OF”)
+=====================================================
+
+3.1 Extração do generated_at
+Extrair a data/hora de emissão em português (exemplo: “terça-feira, 2 de dezembro de 2025 03:32”).
+Converter mês pt->número.
+
+3.2 Definir as_of_date
+as_of_date = date(generated_at)
+
+3.3 Extrair período
+period_start e period_end a partir de “Período: dd/mm/aaaa - dd/mm/aaaa”
+
+3.4 Extrair linhas diárias
+Para cada target_date presente no relatório, extrair occupancy_pct (NN,NN%).
+Se existir total de ocupação em número, extrair também (opcional).
+
+3.5 Classificar cada target_date do HP como REAL ou FORECAST
+Regra objetiva:
+- Se target_date < as_of_date: is_real=True ; is_forecast=False
+- Se target_date >= as_of_date: is_real=False ; is_forecast=True  (snapshot de reservas válidas até aquele momento)
+
+3.6 Persistência
+Salvar em occupancy_snapshots (sempre append).
+Atualizar occupancy_latest conforme maior generated_at por target_date e por tipo (real/forecast).
+Registrar logs.
+
+=====================================================
+4) PARSER CHECKIN/CHECKOUT DIÁRIO (PDF) — SEM MANIPULAÇÃO MANUAL
+=====================================================
+
+4.1 Capturar anchor_date
+- CHECKIN: regex “Entrada dd/mm/aaaa”
+- CHECKOUT: regex “Saída dd/mm/aaaa”
+
+4.2 Capturar linhas de dados (mínimo necessário)
+As linhas começam com UH (3 dígitos) e depois campos.
+Use regex robusta para capturar os primeiros 5 campos:
+r'^(\\d{3})\\s+(\\S+)\\s+(\\d{2}/\\d{2}/\\d{4})\\s+(\\d{2}:\\d{2})\\s+(\\d{2}:\\d{2})\\s+'
+Retorna: UH, Tipo, OtherDate, TimeA, TimeB
+
+Mapeamento por tipo:
+- CHECKIN_DAILY: considerar checkin_time = TimeB
+- CHECKOUT_DAILY: considerar checkout_time = TimeB
+(guardar também TimeA/OtherDate para auditoria)
+
+Persistir em frontdesk_events (event_type, anchor_date, event_time, uh, room_type, etc.)
+
+4.3 Normalização para “dia operacional” e hour_timeline
+CHECKOUT:
+- janela 00:00–12:00 do próprio anchor_date.
+- hour_timeline = hour(event_time)  (0..11)
+- op_date = anchor_date
+
+CHECKIN:
+- janela operacional: 14:00 do dia D até 12:00 do dia D+1.
+Implementar:
+- Se event_time >= 14:00 -> op_date = anchor_date ; hour_timeline = hour (14..23)
+- Se event_time < 12:00  -> op_date = anchor_date - 1 ; hour_timeline = hour + 24 (24..35)
+- Se 12:00 <= event_time < 14:00 -> marcar como “early_checkin”; por padrão op_date = anchor_date ; hour_timeline = hour (12..13) mas permitir regra configurável depois.
+
+4.4 Agregação diária/horária
+Ao final do parse, atualizar frontdesk_events_hourly_agg para (op_date, weekday_pt, hour_timeline, event_type):
+- weekday_pt em PT (SEGUNDA-FEIRA...DOMINGO)
+- count_events
+
+=====================================================
+5) ESTATÍSTICAS AUTOMÁTICAS
+=====================================================
+
+5.1 Estatística horária (% por hora por dia da semana)
+Para cada weekday_pt e hour_timeline:
+pct = count(hour_timeline)/total_eventos_do_dia (por weekday e event_type)
+Persistir em hourly_distribution_stats:
+- metric_name = CHECKIN_PCT ou CHECKOUT_PCT
+- pct e n (n = número de dias distintos usados)
+
+Atualizar incrementalmente (não precisa recalcular tudo sempre; pode recalcular “por weekday” afetado).
+
+5.2 Estatística de projeção (bias_pp por weekday) — usando só HP diário
+Meta: bias_pp(w) = média do erro real - previsto (em pp) para cada weekday.
+Definição do erro:
+- Para um target_date d (no passado), escolher uma previsão de referência e comparar com o real consolidado:
+  * “Previsão as-of sexta”: forecast_value = occupancy_snapshot.forecast que existia no run_date de sexta antes da semana acontecer (implementação: selecionar o forecast snapshot com generated_at mais próximo (<= sexta_run_datetime) para o d).
+  * “Real”: real_value = occupancy_latest.latest_real_occupancy_pct (ou snapshot real mais recente) para o d.
+error_pp = real_value - forecast_value
+
+Atualização:
+- Implementar EWMA por weekday como padrão (mais responsivo):
+  bias_new = (1-α)*bias_old + α*mean(error_pp_da_semana_para_weekday)
+  α configurável (default 0.2)
+Manter n, mae_pp e std_pp.
+
+5.3 Bootstrap (seed inicial)
+Criar um mecanismo simples para iniciar bias_pp sem reprocessar 5 meses:
+- Endpoint POST /stats/bootstrap_bias que recebe um JSON com {weekday_pt: bias_pp, std_pp?, mae_pp?, n?}
+- Alternativamente: aceitar upload de uma planilha/CSV e ler.
+Persistir em weekday_bias_stats com method='bootstrap_manual'.
+
+=====================================================
+6) API + TELAS (MVP)
+=====================================================
+
+6.1 Tela “Inteligência / Uploads”
+- Upload de arquivo (pdf/xlsx/csv)
+- Detecção automática do tipo
+- Exibir status, generated_at, período, logs
+- Reprocessar (re-run parser) se falhar
+
+6.2 Endpoints mínimos
+- POST /uploads (file)
+- GET /uploads (lista)
+- GET /uploads/{id} (detalhe + logs)
+- GET /occupancy/latest?start=...&end=...
+- GET /events/hourly?type=CHECKIN&start=...&end=...
+- GET /stats/weekday_bias
+- GET /stats/hourly_distribution?metric=CHECKIN_PCT|CHECKOUT_PCT
+
+6.3 Qualidade
+- Validações: percentuais 0..100, datas válidas, hora válida
+- Deduplicação por hash (não inserir mesmo arquivo 2x)
+- Logs ricos para debug
+- Tests básicos para parsers (2-3 PDFs amostra) com asserts mínimos.
+
+=====================================================
+7) ENTREGA
+=====================================================
+Entregue:
+- Código implementado e rodando
+- DB migrations
+- Parser modular (hp_parser.py, checkin_checkout_parser.py, detector.py)
+- UI simples (ou endpoints se não houver tempo de UI)
+- Documentação curta (README) de como usar e quais arquivos subir diariamente.
+
+IMPORTANTE
+NÃO implementar escala de camareiras ainda. Isso é Prompt 2. Aqui é somente base de dados + ingestão + estatísticas + projeção ajustada em tabela/consulta.

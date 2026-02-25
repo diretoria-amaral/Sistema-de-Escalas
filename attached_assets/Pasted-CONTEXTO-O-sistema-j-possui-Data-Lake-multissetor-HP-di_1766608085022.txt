@@ -1,0 +1,200 @@
+CONTEXTO
+O sistema já possui:
+- Data Lake multissetor (HP diário + Checkin/Checkout diário)
+- Forecast Run / Baseline congelado + Adjustment Runs
+- Regras trabalhistas globais e regras operacionais por setor
+- Calendário operacional e feriados
+- Escalas geradas por setor
+- Convocações com aceite, recusa e substituição
+- Audit Log básico
+
+OBJETIVO DO PROMPT 15
+Criar a camada de CONSULTAS, HISTÓRICOS e INDICADORES, permitindo:
+1) Acompanhar o que foi planejado x executado
+2) Avaliar comportamento de colaboradores (aceites/recusas)
+3) Avaliar eficiência operacional por setor
+4) Garantir rastreabilidade jurídica e gerencial
+Sem alterar a lógica já implementada.
+
+---
+
+# 1) PRINCÍPIO FUNDAMENTAL
+
+Nada será recalculado neste módulo.
+Este módulo:
+- apenas consulta,
+- consolida,
+- apresenta,
+- e exporta dados já existentes.
+
+---
+
+# 2) TELAS DE CONSULTA (FRONTEND)
+
+Criar a seção:
+📊 **Consultas e Históricos**
+
+## 2.1 Histórico de Convocações por Colaborador
+Tela:
+- Filtros:
+  - colaborador
+  - setor
+  - período (data inicial/final)
+  - status (aceita, recusada, expirada, substituída)
+- Colunas mínimas:
+  - data
+  - setor
+  - atividade
+  - horário
+  - horas totais
+  - status
+  - origem (BASELINE / ADJUSTMENT)
+- Indicadores no topo:
+  - % de aceites
+  - % de recusas
+  - nº de convocações no período
+- Exportação:
+  - Excel (.xlsx)
+  - PDF
+
+## 2.2 Histórico de Convocações por Setor
+Tela:
+- Filtros:
+  - setor
+  - semana ou período
+- Indicadores:
+  - total de convocações
+  - horas convocadas
+  - horas aceitas
+  - horas recusadas
+- Tabela detalhada por dia
+
+---
+
+# 3) PLANEJADO x EXECUTADO
+
+## 3.1 Planejado x Executado (por semana)
+Tela:
+- Selecionar:
+  - setor
+  - semana
+- Exibir:
+  - horas planejadas (Schedule)
+  - horas convocadas
+  - horas aceitas
+  - horas efetivamente trabalhadas (quando disponível)
+- Mostrar diferenças:
+  - déficit
+  - excedente
+- Indicar origem do desvio:
+  - recusas
+  - ajustes operacionais
+  - eventos de calendário
+
+## 3.2 Projeção x Real (Forecast Accuracy)
+Tela:
+- Baseada nos Forecast Runs
+- Para cada dia:
+  - ocupação projetada (baseline)
+  - ocupação ajustada
+  - ocupação real
+  - erro percentual
+- Gráficos simples (linha ou barras)
+- Métrica:
+  - erro médio por dia da semana
+
+---
+
+# 4) INDICADORES OPERACIONAIS POR SETOR
+
+Criar painel “Indicadores por Setor”:
+
+Indicadores mínimos:
+- produtividade média (ex.: quartos/hora, tarefas/hora)
+- % meta de aproveitamento de horas
+- horas improdutivas estimadas
+- impacto de feriados/eventos (%)
+
+Esses indicadores:
+- são apenas leitura
+- usam parâmetros já cadastrados em Regras Operacionais por Setor
+- servem como base para melhoria futura
+
+---
+
+# 5) GOVERNANÇA E COMPLIANCE
+
+## 5.1 Linha do Tempo Jurídica por Colaborador
+Para qualquer colaborador, permitir visualizar:
+- convocações emitidas
+- prazo de antecedência
+- resposta
+- regras aplicadas
+- substituições
+
+Objetivo:
+- permitir reconstruir toda a relação de trabalho em caso de auditoria ou ação judicial.
+
+## 5.2 Audit Log Avançado (Consulta)
+Criar tela para:
+- filtrar audit_log por:
+  - tipo de evento
+  - usuário
+  - período
+- Exportar logs (CSV)
+
+---
+
+# 6) EXPORTAÇÕES
+
+Para TODAS as telas principais:
+- Exportar Excel (.xlsx)
+- Exportar PDF
+
+Exportações devem:
+- refletir exatamente os filtros aplicados
+- conter data/hora da extração
+- conter identificação do setor e período
+
+---
+
+# 7) BACKEND — APOIO
+
+Criar endpoints de leitura:
+- /reports/convocations/by-employee
+- /reports/convocations/by-sector
+- /reports/planned-vs-executed
+- /reports/forecast-accuracy
+- /reports/sector-indicators
+- /reports/audit-log
+
+Esses endpoints:
+- não devem alterar dados
+- devem usar queries agregadas
+- devem ser performáticos (indexes se necessário)
+
+---
+
+# 8) UX E USABILIDADE
+
+- Telas devem carregar rápido (lazy load se necessário)
+- Mensagens claras quando não houver dados
+- Nenhuma tela deve quebrar se período estiver vazio
+
+---
+
+# 9) CRITÉRIOS DE ACEITAÇÃO
+
+Este prompt será considerado concluído quando:
+1) Eu conseguir consultar histórico completo de convocações por colaborador e setor.
+2) Eu conseguir comparar planejado x executado por semana.
+3) Eu conseguir ver projeção x real com erro médio por dia da semana.
+4) Eu conseguir exportar todos os relatórios em Excel e PDF.
+5) Eu conseguir reconstruir a linha do tempo jurídica de qualquer colaborador.
+6) Nada do operacional (escalas/convocações) for impactado negativamente.
+
+RESTRIÇÕES
+- NÃO recalcular dados históricos.
+- NÃO alterar Forecast Runs já existentes.
+- NÃO alterar regras trabalhistas ou operacionais.
+- Tudo deve ser somente leitura.

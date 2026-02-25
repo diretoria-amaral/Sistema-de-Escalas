@@ -1,0 +1,234 @@
+Você está desenvolvendo um AGENTE DE IA PARA GESTÃO INTELIGENTE DE ESCALAS DE TRABALHO em um hotel com forte sazonalidade, contratos intermitentes e planejamento semanal às quintas-feiras com ajustes diários contínuos.
+
+O sistema deve ser totalmente adaptativo, estatístico, auditável e juridicamente seguro.
+
+========================================================
+1. FUNDAMENTOS OPERACIONAIS DO NEGÓCIO
+========================================================
+
+- Planejamento oficial da semana ocorre às QUINTAS-FEIRAS.
+- A escala planejada vale de SEGUNDA a DOMINGO.
+- Após a geração, o sistema DEVE continuar monitorando diariamente:
+  → novos relatórios
+  → variações de ocupação
+  → cancelamentos
+  → no-shows
+  → novos eventos
+
+- O sistema deve RECOMENDAR AJUSTES DIÁRIOS na mão de obra.
+- Convocações devem respeitar antecedência mínima de 72h sempre que possível.
+- Pagamento semanal ocorre às TERÇAS-FEIRAS.
+
+========================================================
+2. SETORES E FASE ATUAL
+========================================================
+
+Fase 1 obrigatória:
+✅ GOVERNANÇA (camareiras e limpeza)
+
+Outros setores futuros:
+- Recepção
+- A&B
+- Manutenção
+- Eventos
+- Segurança
+
+========================================================
+3. CADASTRO DE COLABORADORES (OBRIGATÓRIO)
+========================================================
+
+Para cada colaborador:
+
+- Nome
+- Setor
+- Função
+- CBO
+- Tipo de contrato (intermitente/efetivo)
+- Regime (5x2, 6x1, 12x36, flexível)
+- Meta de horas mensais (ex: 176h)
+- Histórico de turnos
+- Histórico de horas
+- Histórico de convocações
+- Restrições
+- Preferências
+- Última semana de folga completa
+- Velocidade média de execução (para Governança)
+
+========================================================
+4. ATIVIDADES E TEMPOS MÉDIOS (GOVERNANÇA)
+========================================================
+
+Cadastro obrigatório:
+
+- Limpeza Vago Sujo → 25 minutos (editável)
+- Limpeza Estada → 10 minutos (editável)
+
+Esses tempos DEVEM ser parametrizáveis e substituíveis por padrão por colaborador se necessário.
+
+========================================================
+5. TELA DE PARÂMETROS OPERACIONAIS POR SETOR
+========================================================
+
+Tela dinâmica por setor com:
+
+- Meta de aproveitamento das horas (% da jornada)
+- Limites de horas diárias e semanais
+- Regime preferencial (5x2 ou 6x1)
+- Alternância obrigatória:
+  → turnos
+  → horários
+  → atividades
+- Dias máximos consecutivos de trabalho
+- Política de domingos
+- Política de feriados
+- Fator de pico (ex: 1.1, 1.2)
+- Fator de baixa ocupação
+- Jornada média de referência
+
+Todos os parâmetros DEVEM ser editáveis pelo usuário.
+
+========================================================
+6. TELA ÚNICA DE UPLOAD DE RELATÓRIOS
+========================================================
+
+Criar UMA TELA CENTRAL onde o usuário possa:
+
+- Fazer upload de:
+  → Relatórios HP
+  → Relatórios de Check-out horário
+  → Relatórios de ocupação real
+- Informar:
+  → Tipo de relatório (caso não reconheça automaticamente)
+  → Período
+  → Setores impactados
+
+O sistema deve tentar reconhecer automaticamente:
+- Nome do relatório
+- Estrutura
+- Indicadores contidos
+
+Se não reconhecer → usuário seleciona manualmente.
+
+========================================================
+7. RELATÓRIOS MULTISETORIAIS
+========================================================
+
+Um mesmo relatório pode alimentar vários setores:
+
+Exemplos:
+- HP → Governança, Recepção, A&B, Manutenção
+- Checkout horário → Governança e Recepção
+
+Isso DEVE ser parametrizável.
+
+========================================================
+8. MEMÓRIA ESTATÍSTICA DE DESVIOS
+========================================================
+
+O sistema deve armazenar, por setor e por dia da semana:
+
+- Ocupação prevista na quinta
+- Ocupação real no dia
+- Desvio médio histórico
+
+Fórmula base:
+Desvio Médio = Média(Ocupação Real - Ocupação Prevista)
+
+Esse desvio deve ser aplicado automaticamente como FATOR DE CORREÇÃO.
+
+A memória deve:
+- Nunca apagar dados
+- Manter versionamento
+- Ser recalculada a cada novo relatório
+
+========================================================
+9. LÓGICA DE CÁLCULO DA GOVERNANÇA
+========================================================
+
+total_minutos = 
+(Quartos_Vago_Sujo × tempo_vago_sujo) +
+(Quartos_Estada × tempo_estada)
+
+total_horas = total_minutos / 60
+
+horas_aproveitáveis = total_horas × percentual_meta_aproveitamento
+
+camareiras_necessarias = horas_aproveitáveis / jornada_media
+
+Aplicar ainda:
+- Fatores de feriado
+- Fatores de pico
+- Fatores de correção estatística
+
+========================================================
+10. REGRAS JURÍDICAS EDITÁVEIS
+========================================================
+
+- Limite horas diárias
+- Limite 44h semanais / 48h com extra
+- Intervalo mínimo entre jornadas
+- Intervalo intrajornada mínimo/máximo
+- Domingo(s) de folga por mês
+- Semanas de descanso a cada 4 a 6 semanas (intermitentes)
+- Férias
+- Respeito obrigatório ao CBO
+
+========================================================
+11. PLANEJAMENTO SEMANAL + AJUSTES DIÁRIOS
+========================================================
+
+- Quinta: Gera escala BASE
+- Sexta a Domingo:
+  → Sistema continua recomendando:
+     - redução de turnos
+     - aumento de turnos
+     - redistribuição de equipe
+
+Toda recomendação deve:
+- Ser auditável
+- Ser justificável com dados
+
+========================================================
+12. OUTPUT DA ESCALA
+========================================================
+
+Formato obrigatório:
+
+Semana:
+Nome:
+Cargo:
+Horas Semana:
+
+Dia | Data | Horas | Entrada | Início Intervalo | Fim Intervalo | Saída | Atividade
+
+========================================================
+13. AUDITORIA E COMPLIANCE
+========================================================
+
+Registrar obrigatoriamente:
+
+- Uploads
+- Processamento
+- Geração de escala
+- Ajustes automáticos
+- Desvios estatísticos
+- Alterações de regras
+
+Nada pode ser apagado sem log.
+
+========================================================
+14. OBJETIVO FINAL DO AGENTE
+========================================================
+
+Criar um sistema que:
+
+✅ Planeje  
+✅ Ajuste  
+✅ Aprenda  
+✅ Proteja juridicamente  
+✅ Otimize produtividade  
+✅ Preserve renda dos colaboradores  
+✅ Reduza desperdícios  
+✅ Seja adaptativo e estatístico  
+
+O foco INICIAL é GOVERNANÇA.

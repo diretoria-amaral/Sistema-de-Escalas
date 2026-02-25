@@ -1,0 +1,198 @@
+{
+  "global_rules": {
+    "LABOR": {
+      "MANDATORY": [
+        {
+          "title": "Aviso previo de 72 horas",
+          "pergunta": "Qual o prazo minimo de antecedencia para convocar um trabalhador intermitente?",
+          "resposta": "A convocacao deve ser feita com no minimo 72 horas de antecedencia, conforme Art. 452-A da CLT."
+        },
+        {
+          "title": "Jornada maxima diaria",
+          "pergunta": "Qual o limite maximo de horas trabalhadas por dia?",
+          "resposta": "A jornada maxima e de 8 horas diarias, podendo ser estendida ate 10 horas com adicional de horas extras."
+        },
+        {
+          "title": "Jornada maxima semanal",
+          "pergunta": "Qual o limite maximo de horas trabalhadas por semana?",
+          "resposta": "A jornada maxima semanal e de 44 horas, conforme legislacao trabalhista."
+        },
+        {
+          "title": "Intervalo intrajornada",
+          "pergunta": "Qual o intervalo minimo para refeicao e descanso durante a jornada?",
+          "resposta": "Para jornadas superiores a 6 horas, o intervalo minimo e de 1 hora. Para jornadas entre 4 e 6 horas, o intervalo minimo e de 15 minutos."
+        },
+        {
+          "title": "Descanso semanal remunerado",
+          "pergunta": "Qual a regra para o descanso semanal remunerado (DSR)?",
+          "resposta": "Todo trabalhador tem direito a pelo menos 24 horas consecutivas de descanso semanal, preferencialmente aos domingos."
+        },
+        {
+          "title": "Intervalo entre jornadas",
+          "pergunta": "Qual o intervalo minimo entre o fim de uma jornada e o inicio da proxima?",
+          "resposta": "O intervalo minimo entre jornadas e de 11 horas consecutivas."
+        }
+      ],
+      "DESIRABLE": [
+        {
+          "title": "Rotatividade de escalas",
+          "pergunta": "Como deve ser feita a rotatividade de escalas?",
+          "resposta": "Recomenda-se alternar turnos e folgas de forma equitativa entre os colaboradores, evitando sobrecarga em determinados funcionarios."
+        },
+        {
+          "title": "Preferencia por colaboradores locais",
+          "pergunta": "Deve-se priorizar colaboradores que moram proximo ao hotel?",
+          "resposta": "E desejavel priorizar colaboradores com menor deslocamento, reduzindo custos e riscos de atraso."
+        }
+      ],
+      "FLEXIBLE": [
+        {
+          "title": "Banco de horas",
+          "pergunta": "E permitido o uso de banco de horas?",
+          "resposta": "O banco de horas pode ser utilizado mediante acordo individual ou coletivo, respeitando os limites legais de compensacao."
+        }
+      ]
+    },
+    "SYSTEM": {
+      "MANDATORY": [
+        {
+          "title": "Aprovacao obrigatoria de escala",
+          "pergunta": "A escala gerada pelo agente deve ser aprovada antes de iniciar convocacoes?",
+          "resposta": "Sim, toda escala gerada pelo agente e SUGESTIVA e deve ser aprovada por um gestor antes de qualquer convocacao ser enviada."
+        },
+        {
+          "title": "Validacao de prerequisitos",
+          "pergunta": "Quais prerequisitos devem ser validados antes de gerar uma escala?",
+          "resposta": "Antes de gerar a escala, o sistema deve validar: 1) Existencia de Forecast Run aprovado, 2) Programacao de atividades definida, 3) Parametros semanais configurados."
+        },
+        {
+          "title": "Rastreabilidade de decisoes",
+          "pergunta": "As decisoes do agente devem ser rastreavels?",
+          "resposta": "Sim, toda decisao do agente deve gerar um registro de memoria de calculo (AgentTraceStep) com as regras aplicadas, violadas e justificativas."
+        }
+      ],
+      "DESIRABLE": [
+        {
+          "title": "Sugestoes diarias automaticas",
+          "pergunta": "O sistema deve gerar sugestoes de ajuste diariamente?",
+          "resposta": "E desejavel que o sistema analise diariamente novas informacoes (ocupacao, recusas) e gere sugestoes de ajuste para o Copiloto."
+        },
+        {
+          "title": "Notificacao de violacoes",
+          "pergunta": "O sistema deve notificar violacoes de regras?",
+          "resposta": "E desejavel que o sistema destaque visualmente regras violadas e alerte gestores sobre potenciais problemas de conformidade."
+        }
+      ],
+      "FLEXIBLE": [
+        {
+          "title": "Modo automatico de programacao",
+          "pergunta": "A programacao de atividades pode ser gerada automaticamente?",
+          "resposta": "O sistema pode operar em modo AUTO para gerar programacao baseada em historico e demanda prevista, mas requer aprovacao."
+        }
+      ]
+    }
+  },
+  "sector_rules": {
+    "OPERATIONAL": {
+      "MANDATORY": [
+        {
+          "title": "Margem de seguranca",
+          "pergunta": "Qual e a margem de seguranca que o agente deve adotar, para o calculo de horas de demanda de mao de obra?",
+          "resposta": "O agente deve adicionar 10% como margem de seguranca ao numero de horas totais calculadas a partir da programacao de atividades para uma determinada semana."
+        },
+        {
+          "title": "Intervalo entre convocacoes",
+          "pergunta": "O agente deve seguir a regra de manter no minimo um dia de intervalo entre as convocacoes de um mesmo colaborador?",
+          "resposta": "Sim, o agente deve usar a regra de pelo menos uma folga semanal para colaborador, para fazer com que haja no minimo um dia de intervalo entre as convocacoes de um mesmo colaborador."
+        },
+        {
+          "title": "Multiplas convocacoes para o mesmo periodo",
+          "pergunta": "O agente pode fazer multiplas convocacoes para um mesmo colaborador no mesmo dia ou periodo?",
+          "resposta": "Nao, o agente deve garantir que cada colaborador tenha no maximo uma convocacao por dia, evitando conflitos de horario."
+        },
+        {
+          "title": "Tempo minimo de turno",
+          "pergunta": "Qual o tempo minimo de um turno de trabalho?",
+          "resposta": "O turno minimo deve ser de 4 horas para garantir viabilidade operacional e conformidade trabalhista."
+        },
+        {
+          "title": "Limite de horas extras",
+          "pergunta": "Qual o limite de horas extras permitidas por dia?",
+          "resposta": "O limite e de 2 horas extras por dia, totalizando no maximo 10 horas de jornada diaria."
+        }
+      ],
+      "DESIRABLE": [
+        {
+          "title": "Distribuicao equilibrada de carga",
+          "pergunta": "Como deve ser distribuida a carga de trabalho entre os colaboradores?",
+          "resposta": "E desejavel distribuir a carga de trabalho de forma equilibrada, evitando que alguns colaboradores trabalhem muito mais que outros."
+        },
+        {
+          "title": "Preferencia por turnos fixos",
+          "pergunta": "Deve-se priorizar manter colaboradores em turnos fixos?",
+          "resposta": "E desejavel manter colaboradores em turnos similares quando possivel, respeitando suas preferencias e reduzindo o impacto na vida pessoal."
+        },
+        {
+          "title": "Agrupamento de atividades",
+          "pergunta": "Atividades devem ser agrupadas por proximidade?",
+          "resposta": "E desejavel agrupar atividades por andar ou area para otimizar deslocamento e tempo de execucao."
+        }
+      ],
+      "FLEXIBLE": [
+        {
+          "title": "Substituicao de colaboradores",
+          "pergunta": "Qual a regra para substituicao de colaboradores em caso de recusa ou ausencia?",
+          "resposta": "Em caso de recusa ou ausencia, o sistema deve sugerir colaboradores substitutos considerando disponibilidade, qualificacao e carga de trabalho atual."
+        },
+        {
+          "title": "Ajuste por ocupacao",
+          "pergunta": "A escala pode ser ajustada com base na ocupacao real?",
+          "resposta": "Sim, a escala pode ser ajustada diariamente com base na ocupacao real do hotel, desde que respeitados os limites de aviso previo."
+        }
+      ]
+    },
+    "CALCULATION": {
+      "MANDATORY": [
+        {
+          "title": "Calculo de demanda por quarto ocupado",
+          "pergunta": "Como calcular a demanda de horas de trabalho por quarto ocupado?",
+          "resposta": "A demanda base e de 0.5 horas por quarto ocupado para arrumacao de estadia e 0.75 horas para checkout."
+        },
+        {
+          "title": "Fator de produtividade por experiencia",
+          "pergunta": "Como ajustar o calculo de horas pela experiencia do colaborador?",
+          "resposta": "Aplicar fator 1.0 para colaboradores experientes (>1 ano), 1.15 para intermediarios (3-12 meses), e 1.3 para novatos (<3 meses)."
+        },
+        {
+          "title": "Calculo de turnos necessarios",
+          "pergunta": "Como calcular o numero de turnos necessarios para cobrir a demanda?",
+          "resposta": "Dividir as horas totais de demanda pela duracao media do turno (6 horas), arredondando para cima."
+        }
+      ],
+      "DESIRABLE": [
+        {
+          "title": "Ajuste por sazonalidade",
+          "pergunta": "Como ajustar o calculo de demanda pela sazonalidade?",
+          "resposta": "Aplicar fatores sazonais: alta temporada (+20%), baixa temporada (-15%), feriados (+30%)."
+        },
+        {
+          "title": "Calculo de folgas",
+          "pergunta": "Como calcular a necessidade de folgas na escala semanal?",
+          "resposta": "Cada colaborador deve ter no minimo 1 folga semanal, preferencialmente 2 folgas nao consecutivas."
+        }
+      ],
+      "FLEXIBLE": [
+        {
+          "title": "Otimizacao de custos",
+          "pergunta": "Como otimizar o custo total da escala?",
+          "resposta": "O agente pode sugerir ajustes para minimizar horas extras e maximizar uso de colaboradores CLT antes de intermitentes."
+        },
+        {
+          "title": "Balanceamento de qualificacoes",
+          "pergunta": "Como balancear as qualificacoes na equipe de cada turno?",
+          "resposta": "E flexivel garantir que cada turno tenha ao menos 1 colaborador experiente para supervisao e suporte a novatos."
+        }
+      ]
+    }
+  }
+}

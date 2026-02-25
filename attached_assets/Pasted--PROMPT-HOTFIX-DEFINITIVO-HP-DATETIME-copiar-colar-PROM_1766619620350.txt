@@ -1,0 +1,197 @@
+🔥 PROMPT — HOTFIX DEFINITIVO HP DATETIME (copiar/colar)
+PROMPT — CORREÇÃO DEFINITIVA DO ERRO
+"can't compare offset-naive and offset-aware datetimes"
+NO PIPELINE DE HP (OBRIGATÓRIO)
+
+CONTEXTO
+O agente processa relatórios HP (PDF) diariamente.
+Dos vários HPs enviados, apenas 6 foram processados com sucesso.
+Todos os demais falham com o erro:
+"can't compare offset-naive and offset-aware datetimes".
+
+Este erro é CRÍTICO e BLOQUEIA o Data Lake.
+Ele indica que o código está comparando datetimes com timezone (aware)
+com datetimes sem timezone (naive).
+
+OBJETIVO
+Eliminar COMPLETAMENTE esse erro do pipeline de HP, garantindo:
+- padronização absoluta de datas/horas
+- nenhuma comparação inválida
+- 100% dos HPs válidos processados com status PROCESSED
+
+---
+
+# 1) REGRA ABSOLUTA DE TEMPO (NÃO NEGOCIÁVEL)
+
+A aplicação deve obedecer **UMA ÚNICA REGRA**:
+
+✅ TODAS as variáveis datetime do backend devem ser:
+- timezone-aware
+- normalizadas em UTC
+
+❌ É PROIBIDO:
+- comparar aware com naive
+- misturar datetime com date em comparações
+- depender de timezone local do sistema
+
+---
+
+# 2) NORMALIZAÇÃO OBRIGATÓRIA (ONDE CORRIGIR)
+
+## 2.1 No parser do HP (IMEDIATO)
+Assim que `generated_at` for extraído do PDF:
+
+- Se vier sem timezone:
+
+
+generated_at = generated_at.replace(tzinfo=timezone.utc)
+
+- Se vier com timezone:
+
+
+generated_at = generated_at.astimezone(timezone.utc)
+
+
+Isso deve acontecer **antes de qualquer uso** da variável.
+
+---
+
+## 2.2 Regra REAL vs FORECAST (CORREÇÃO FUNDAMENTAL)
+
+❌ ERRO ATUAL (provável):
+
+
+if target_date < generated_at:
+
+
+✅ REGRA CORRETA:
+
+
+as_of_date = generated_at.date()
+
+if target_date < as_of_date:
+status = REAL
+else:
+status = FORECAST
+
+
+🚫 NUNCA comparar DATE com DATETIME.
+
+---
+
+## 2.3 Deduplicação e Ordenação
+Ao usar `(target_date, generated_at)` como chave:
+
+- `target_date` → DATE
+- `generated_at` → DATETIME (UTC aware)
+
+Qualquer sort/order/filter deve ocorrer entre:
+- DATETIME vs DATETIME
+- DATE vs DATE
+
+Nunca misturar.
+
+---
+
+## 2.4 Banco de Dados (obrigatório verificar)
+Verificar e corrigir:
+
+- Campos como:
+  - uploaded_at
+  - processed_at
+  - generated_at
+devem ser `TIMESTAMPTZ`.
+
+Se houver `timestamp without time zone`:
+- migrar para `TIMESTAMPTZ`
+OU
+- garantir que sempre gravam UTC-aware (não recomendado, mas aceitável se consistente).
+
+---
+
+# 3) PIPELINE DE STATUS (CORREÇÃO DE ESTADO)
+
+Corrigir a máquina de estados do upload HP:
+
+Estados válidos:
+- UPLOADED
+- PROCESSING
+- PROCESSED
+- FAILED
+
+Regras:
+- Se ao menos 1 linha for persistida → PROCESSED
+- FAILED somente se:
+  - parsing falhou
+  - zero linhas persistidas
+  - erro não recuperável
+
+❌ É PROIBIDO:
+- status FAILED coexistir com “Confiança 100%”
+- marcar FAILED após persistência bem-sucedida
+
+---
+
+# 4) LOGS E DIAGNÓSTICO (OBRIGATÓRIO)
+
+Criar ou garantir logs estruturados por etapa:
+
+Tabela (ou estrutura equivalente):
+- report_extract_log
+Campos:
+- report_upload_id
+- step (DETECT, PARSE_HEADER, PARSE_ROWS, NORMALIZE, UPSERT, FINALIZE)
+- level (INFO / WARN / ERROR)
+- message
+- payload_json
+
+Sempre registrar:
+- tipo de datetime detectado (naive/aware)
+- valor original
+- valor normalizado
+
+---
+
+# 5) REPROCESSAMENTO EM MASSA (OBRIGATÓRIO)
+
+Criar função/endpoint:
+- `reprocess_failed_hp_uploads()`
+
+Fluxo:
+1) Buscar todos HP com status FAILED
+2) Reprocessar usando o parser corrigido
+3) Atualizar status corretamente
+4) Registrar tentativa e resultado
+
+---
+
+# 6) TESTE DE ACEITAÇÃO (NÃO NEGOCIÁVEL)
+
+Usar os HPs reais já enviados (inclusive os que falharam).
+
+Critérios de aceite:
+- Nenhum erro "offset-naive and offset-aware" ocorre
+- Todos HPs válidos terminam com status PROCESSED
+- occupancy_snapshots preenchida
+- occupancy_latest atualizado
+- Tela de uploads reflete status correto
+- Logs mostram NORMALIZAÇÃO DE DATETIME executada
+
+Se qualquer HP válido ainda falhar, o prompt NÃO está concluído.
+
+---
+
+# 7) ENTREGA OBRIGATÓRIA
+
+- Commit com mensagem:
+  "HOTFIX: normalize datetime to UTC-aware across HP pipeline"
+- Documento curto no README ou replit.md:
+  - causa raiz encontrada
+  - solução aplicada
+  - como validar
+
+IMPORTANTE
+Não criar workaround.
+Não suprimir erro.
+Não ignorar comparação.
+A correção deve ser estrutural e definitiva.

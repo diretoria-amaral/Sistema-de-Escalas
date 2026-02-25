@@ -1,0 +1,123 @@
+CONTEXTO
+O sistema já possui:
+- Baseline semanal congelado
+- Adjustment Runs
+- Programação de Atividades
+- Turnos/Templates
+- Escalas geradas
+- Convocações com aceite, recusa e substituição
+- Calendário operacional e feriados
+- Audit log
+
+OBJETIVO DO PROMPT 17
+Criar:
+1) Tela de Confirmação e Alterações Operacionais
+2) Módulo de Sugestões Diárias (copiloto)
+Sem violar o baseline nem regras trabalhistas.
+
+---
+
+# 1) CONFIRMAÇÃO / ALTERAÇÕES
+
+## 1.1 Página “Confirmação e Alterações”
+Menu: Operação → Confirmação / Alterações
+
+Funcionalidades:
+- Selecionar:
+  - setor
+  - semana
+  - dia específico
+- Visualizar:
+  - escala planejada
+  - convocações emitidas
+  - aceites / recusas
+  - substituições
+- Ações permitidas:
+  - cancelar convocação (com motivo)
+  - gerar substituição
+  - ajustar horário (somente via Adjustment Run)
+- Bloqueios:
+  - nunca alterar Baseline
+  - sempre gerar Adjustment Run com motivo
+
+---
+
+# 2) SUGESTÕES DIÁRIAS (COPILOTO)
+
+## 2.1 Conceito
+Sugestões Diárias NÃO executam ações.
+Elas apenas recomendam ajustes com base em dados novos.
+
+## 2.2 Fontes de dados
+- Novos HPs (ocupação mudou)
+- Checkins / Checkouts do dia
+- Recusas de convocação
+- Eventos de calendário
+- Desvio histórico projeção x real
+
+## 2.3 Tipos de sugestões
+- “Sugestão de reforço de equipe”
+- “Sugestão de redução de horas”
+- “Sugestão de antecipar/adiar turnos”
+- “Sugestão de substituição preventiva”
+
+Cada sugestão deve conter:
+- setor
+- dia
+- impacto estimado (horas / pessoas)
+- justificativa clara
+- botão:
+  - “Aplicar” → gera Adjustment Run
+  - “Ignorar” → registra decisão
+
+---
+
+# 3) MODELAGEM DE DADOS
+
+## 3.1 suggestion
+- id
+- sector_id
+- date
+- suggestion_type
+- description
+- impact_json
+- status (OPEN / APPLIED / IGNORED)
+- created_at / resolved_at
+- resolved_by
+
+---
+
+# 4) FRONTEND — UX
+
+## 4.1 Tela “Sugestões Diárias”
+Menu: Operação → Sugestões Diárias
+
+- Lista ordenada por impacto
+- Badges:
+  - financeiro
+  - operacional
+  - legal
+- Histórico de sugestões aplicadas/ignoradas
+
+---
+
+# 5) AUDITORIA E GOVERNANÇA
+
+Registrar:
+- SUGGESTION_CREATED
+- SUGGESTION_APPLIED
+- SUGGESTION_IGNORED
+- ADJUSTMENT_CREATED_FROM_SUGGESTION
+
+Garantir:
+- Toda decisão humana fica registrada
+- Nenhuma sugestão vira ação automática sem clique
+
+---
+
+# 6) CRITÉRIOS DE ACEITAÇÃO
+1) Consigo visualizar e confirmar escalas e convocações.
+2) Alterações sempre geram Adjustment Run.
+3) Sugestões aparecem com base em dados novos.
+4) Sugestões são explicáveis e opcionais.
+5) Sistema nunca executa ações sem confirmação humana.

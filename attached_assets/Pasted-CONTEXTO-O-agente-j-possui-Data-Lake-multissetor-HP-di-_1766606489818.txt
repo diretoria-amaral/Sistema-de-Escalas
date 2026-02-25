@@ -1,0 +1,180 @@
+CONTEXTO
+O agente já possui:
+- Data Lake multissetor (HP diário, CHECKIN, CHECKOUT)
+- Forecast Run / Baseline semanal (congelado na sexta-feira)
+- Adjustment Runs (eventos posteriores)
+- Regras Trabalhistas Globais
+- Regras Operacionais por Setor
+- Calendário Operacional e feriados
+- Geração de proposta de escala por setor (baseada em demanda e produtividade)
+
+OBJETIVO DO PROMPT 14
+Implementar o fluxo completo de:
+1) Convocação de colaboradores intermitentes
+2) Aceite ou recusa
+3) Reescala automática em caso de recusa ou ajuste operacional
+4) Auditoria completa para segurança trabalhista
+
+---
+
+# 1) CONCEITO CENTRAL: CONVOCAÇÃO COMO ENTIDADE
+
+Criar a entidade "Convocation", distinta de "Schedule".
+
+- Schedule = plano teórico por setor/dia/turno
+- Convocation = oferta formal ao colaborador (jurídica)
+
+Uma convocação deve existir SOMENTE após aprovação do Schedule.
+
+---
+
+# 2) BACKEND — MODELAGEM
+
+## 2.1 Entidade: convocation
+Campos mínimos:
+- id
+- employee_id
+- sector_id
+- activity_id
+- schedule_id
+- date
+- start_time
+- end_time
+- break_minutes (default = 60)
+- total_hours
+- status (PENDING / ACCEPTED / DECLINED / EXPIRED / CANCELLED)
+- response_deadline (datetime)
+- generated_from (BASELINE / ADJUSTMENT)
+- forecast_run_id
+- created_at / updated_at
+
+## 2.2 Regras trabalhistas automáticas (aplicação obrigatória)
+Antes de criar uma convocação, validar:
+- Antecedência mínima legal (ex.: ≥ 72h)
+- Limite diário e semanal de horas
+- Respeito a descansos mínimos
+- Compatibilidade com função/atividade
+Se violar regra:
+- Bloquear convocação
+- Registrar motivo claro (audit_log)
+
+---
+
+# 3) FLUXO OPERACIONAL
+
+## 3.1 Geração de Convocações
+Para cada Schedule aprovado:
+- Gerar convocações individuais por colaborador
+- Definir prazo de resposta (configurável por setor)
+- Registrar evento: CONVOCATION_CREATED
+
+## 3.2 Aceite / Recusa
+Cada convocação pode:
+- Ser aceita
+- Ser recusada
+- Expirar automaticamente (sem resposta)
+
+Atualizar status e registrar:
+- CONVOCATION_ACCEPTED
+- CONVOCATION_DECLINED
+- CONVOCATION_EXPIRED
+
+---
+
+# 4) REESCALA AUTOMÁTICA (CORE DO AGENTE)
+
+Quando ocorrer:
+- Recusa
+- Expiração
+- Cancelamento por ajuste operacional
+
+O sistema deve:
+1) Identificar déficit de horas por setor/dia/turno
+2) Buscar automaticamente colaboradores elegíveis:
+   - mesma função
+   - setor correto
+   - respeitando regras legais
+3) Gerar nova convocação
+4) Marcar como:
+   generated_from = ADJUSTMENT
+5) Registrar o evento completo
+
+IMPORTANTE:
+- Nunca alterar o Baseline
+- Toda reescala gera Adjustment Run implícito
+
+---
+
+# 5) FRONTEND — TELAS OPERACIONAIS
+
+## 5.1 Página: Convocações
+- Lista filtrável por:
+  - setor
+  - colaborador
+  - status
+  - semana
+- Indicadores:
+  - aceitas
+  - recusadas
+  - pendentes
+  - expiradas
+
+## 5.2 Página: Aceite/Recusa (Admin/Supervisor)
+- Visualizar histórico por colaborador
+- Motivos de recusa (campo opcional)
+- Destaque para reincidência (analítico futuro)
+
+---
+
+# 6) GOVERNANÇA E AUDITORIA
+
+## 6.1 Audit Log obrigatório
+Registrar:
+- CONVOCATION_CREATED
+- CONVOCATION_ACCEPTED
+- CONVOCATION_DECLINED
+- CONVOCATION_EXPIRED
+- CONVOCATION_CANCELLED
+- RESCHEDULE_TRIGGERED
+
+Campos mínimos:
+- timestamp
+- user/system
+- employee_id
+- sector_id
+- date
+- hours
+- reason (se aplicável)
+
+## 6.2 Rastreabilidade jurídica
+Para qualquer colaborador, o sistema deve permitir:
+- Ver todas as convocações
+- Ver respostas
+- Ver prazos
+- Ver regras aplicadas no momento
+
+---
+
+# 7) UX — PRINCÍPIOS
+
+- Nenhuma ação silenciosa
+- Toda recusa gera explicação visível
+- Toda reescala mostra:
+  “Gerada por recusa / expiração / ajuste”
+
+---
+
+# 8) CRITÉRIOS DE ACEITAÇÃO
+
+Este prompt estará concluído quando:
+1) Convocações existirem como entidade própria
+2) Aceite/recusa alterarem o estado real do sistema
+3) Reescala automática funcionar sem intervenção manual
+4) Nenhuma regra legal seja violada silenciosamente
+5) Auditoria permita reconstruir toda a linha do tempo
+
+RESTRIÇÕES
+- NÃO implementar notificações externas ainda (WhatsApp, e-mail, etc.)
+- NÃO quebrar Forecast Run / Baseline
+- NÃO criar lógica específica para governança
+- Tudo deve ser multissetor e extensível

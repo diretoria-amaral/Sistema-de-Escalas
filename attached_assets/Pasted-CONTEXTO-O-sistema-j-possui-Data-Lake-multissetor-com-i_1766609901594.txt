@@ -1,0 +1,181 @@
+CONTEXTO
+O sistema já possui:
+- Data Lake multissetor com ingestão diária (HP mês corrente e próximo mês, Checkin e Checkout)
+- Regras REAL vs FORECAST baseadas em as_of_date
+- Forecast Run / Baseline congelado + Adjustment Runs
+- Estatísticas EWMA e distribuição horária
+- Regras trabalhistas globais e regras operacionais por setor
+- Calendário operacional e feriados
+- Geração de escalas
+- Convocações com aceite, recusa, substituição e reescala automática
+- Consultas, históricos, indicadores e auditoria (Prompt 15)
+
+OBJETIVO DO PROMPT 17
+Finalizar o agente para uso em produção, garantindo:
+1) Governança trabalhista explícita e defensável
+2) Robustez contra uso incorreto ou incompleto
+3) Mecanismos de travamento e versionamento
+4) Documentação viva e autoexplicativa
+5) Estado de “sistema pronto” (production-ready)
+
+---
+
+# 1) GOVERNANÇA TRABALHISTA FINAL (NÍVEL JURÍDICO)
+
+## 1.1 Modo Intermitente (Obrigatório)
+Criar uma flag global do sistema:
+- work_regime_mode = INTERMITENTE
+
+Quando ativa:
+- Bloquear qualquer funcionalidade que caracterize:
+  - habitualidade fixa
+  - escala contínua automática
+  - carga horária fixa mensal implícita
+- Forçar que TODA escala gere convocações formais individuais
+- Impedir geração de escalas sem antecedência mínima legal
+
+Exibir alerta fixo no sistema:
+“Sistema operando em modo de trabalho intermitente – convocações devem respeitar a legislação vigente.”
+
+---
+
+## 1.2 Relatório Jurídico Automático
+Criar relatório:
+📄 “Dossiê Trabalhista do Colaborador”
+
+Conteúdo:
+- Dados cadastrais
+- Histórico completo de convocações
+- Datas de emissão e antecedência
+- Aceites, recusas e ausências
+- Regras aplicadas em cada convocação
+- Linha do tempo consolidada
+
+Exportação:
+- PDF único por colaborador
+- Gerado sob demanda
+
+---
+
+# 2) TRAVAMENTOS E CONTROLES DE SEGURANÇA
+
+## 2.1 Travamento de Baseline
+- Um Forecast Run marcado como BASELINE:
+  - NÃO pode ser alterado ou deletado
+  - Apenas consultado
+- Qualquer mudança posterior gera:
+  - Adjustment Run obrigatório
+  - Registro de motivo
+
+## 2.2 Travamento de Período
+- Após a data de início da semana:
+  - Bloquear edição de escalas daquele período
+  - Permitir apenas:
+    - substituições
+    - cancelamentos
+    - ajustes documentados
+
+---
+
+# 3) VERSIONAMENTO E MEMÓRIA DO SISTEMA
+
+## 3.1 Versionamento de Regras
+Sempre que regras forem alteradas:
+- Criar nova versão
+- Vincular versão aplicada a:
+  - Forecast Run
+  - Escalas
+  - Convocações
+
+Permitir consulta:
+- “Quais regras estavam vigentes nesta semana?”
+
+---
+
+## 3.2 Versionamento de Parsers
+Exibir claramente:
+- parser_version
+- method_version
+- data de alteração
+
+Em relatórios e tela de Data Lake.
+
+---
+
+# 4) AUTODIAGNÓSTICO DO SISTEMA
+
+Criar uma tela:
+🛠️ “Status do Sistema”
+
+Mostrar:
+- Último upload de HP / Checkin / Checkout
+- Último Forecast Run
+- Última geração de escala
+- Última convocação emitida
+- Alertas:
+  - dados insuficientes
+  - inconsistências detectadas
+  - setores sem parâmetros
+
+Esta tela deve responder à pergunta:
+“O sistema está saudável para gerar escalas hoje?”
+
+---
+
+# 5) DOCUMENTAÇÃO VIVA (OBRIGATÓRIA)
+
+Criar seção:
+📘 “Como o sistema decide”
+
+Conteúdo gerado automaticamente:
+- Passo a passo lógico:
+  1) ingestão de dados
+  2) definição REAL vs FORECAST
+  3) baseline
+  4) ajustes
+  5) cálculo de demanda
+  6) geração de escalas
+  7) convocações
+- Parâmetros utilizados
+- Últimas versões de regras
+
+Objetivo:
+- Que qualquer gestor, auditor ou advogado entenda o funcionamento.
+
+---
+
+# 6) CHECKLIST DE PRONTIDÃO PARA PRODUÇÃO
+
+Criar um checklist interno que valide:
+- Existem dados suficientes?
+- Regras estão configuradas?
+- Calendário está preenchido?
+- Setores possuem atividades?
+- Modo intermitente está ativo?
+
+Bloquear ações críticas se checklist não estiver completo.
+
+---
+
+# 7) CRITÉRIOS DE ACEITAÇÃO FINAL
+
+Este prompt será considerado concluído quando:
+1) O sistema impedir uso indevido que descaracterize contrato intermitente.
+2) For possível gerar um dossiê jurídico completo de qualquer colaborador.
+3) Baselines não puderem ser alterados.
+4) Regras e parsers forem versionados e rastreáveis.
+5) Gestores consigam verificar rapidamente se o sistema está “apto a operar”.
+6) Qualquer decisão do sistema seja explicável e auditável.
+
+RESTRIÇÕES
+- NÃO criar novas regras trabalhistas.
+- NÃO recalcular dados históricos.
+- NÃO alterar Data Lake ou Forecast logic.
+- Apenas encapsular, proteger e documentar o que já existe.
+
+ENTREGA
+- Commit “v1.3.0 – Production Ready & Compliance Closure”.
+- Atualizar README com:
+  - visão geral do sistema
+  - limitações conhecidas
+  - próximos passos opcionais.

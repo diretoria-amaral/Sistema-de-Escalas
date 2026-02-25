@@ -1,0 +1,192 @@
+PROMPT 8 (copiar/colar) — Multissetor definitivo: Atividades por Setor + Regras Globais vs Operacionais + UI por Setor
+
+Contexto do projeto (não alterar o que já está funcionando):
+O sistema já possui Data Lake com ingestão por conteúdo de HP diário, CHECKIN diário e CHECKOUT diário, com regra REAL vs FORECAST por as_of_date, deduplicação e estatísticas (EWMA por weekday + distribuição horária). Já existe o conceito de Forecast Run / Baseline de Planejamento e telas/rotas principais funcionando.
+
+Objetivo do Prompt 8:
+Transformar o app em multissetor de verdade (governança + recepção + manutenção no futuro), sem quebrar a governança atual, garantindo:
+
+Cadastro de atividades SEMPRE vinculado a um setor (atividade pertence a um setor).
+
+Regras separadas em duas famílias:
+
+Regras trabalhistas globais (válidas para todos os setores) — uma tela única.
+
+Regras operacionais por setor (parâmetros e indicadores do setor) — UI com botão/aba por setor cadastrado.
+
+Preparar a arquitetura para que, no futuro, cada setor tenha seu “módulo” de cálculo, mas sem duplicar telas.
+
+A) BACKEND — Modelos e Banco
+A1) Atividades por setor (obrigatório)
+
+Garanta que o model/tabela de Activities tenha sector_id NOT NULL (FK para sectors.id).
+
+Se hoje existe governance_activities ou nomes específicos, não apague: faça uma migração/compatibilidade:
+
+Opção preferida: renomear conceitualmente para activities e manter a tabela se já existir (ou criar view/alias), mas o importante é: toda Activity deve ter sector_id.
+
+Ajuste os schemas:
+
+ActivityCreate deve exigir: sector_id, name, avg_minutes_per_unit (ou equivalente), category/type se houver.
+
+ActivityUpdate deve permitir alterações parciais.
+
+Ajuste as rotas:
+
+GET /api/activities?sector_id=... (filtra)
+
+POST /api/activities (cria com sector_id obrigatório)
+
+PUT /api/activities/{id}
+
+DELETE /api/activities/{id}
+
+A2) Regras trabalhistas globais (uma única fonte)
+
+Crie/garanta um model labor_rules (singleton ou “latest active”):
+
+Campos típicos (não inventar demais): antecedência mínima convocação (72h), máximo dias consecutivos, intervalo mínimo, descanso semanal, regras de intermitente etc.
+
+Rotas:
+
+GET /api/labor-rules (retorna regras ativas)
+
+PUT /api/labor-rules (atualiza e versiona / audit log)
+
+Versionar: effective_from, version, created_at, updated_at.
+
+A3) Regras operacionais por setor (parametrização do setor)
+
+Criar/garantir model: sector_operational_rules
+
+sector_id (FK), target_utilization_pct (meta de aproveitamento), buffer_pct (margem), cleaning_vago_sujo_minutes, cleaning_estadia_minutes (governança), e campos “genéricos” (ex.: notes, json_extra).
+
+Permitir que cada setor tenha regras próprias sem inflar colunas: incluir rules_json (JSONB) para extensões futuras.
+
+Rotas:
+
+GET /api/sectors/{sector_id}/operational-rules
+
+PUT /api/sectors/{sector_id}/operational-rules
+
+(Opcional) GET /api/sectors/{sector_id}/operational-rules/versions
+
+A4) Weekly Parameters / Setup por setor (se já existir, alinhar)
+
+Se existir weekly_parameters, garantir sector_id obrigatório e que o front consiga editar por setor.
+
+Rotas:
+
+GET /api/sectors/{sector_id}/weekly-parameters?week_start=YYYY-MM-DD
+
+PUT /api/sectors/{sector_id}/weekly-parameters?week_start=YYYY-MM-DD
+
+A5) Forecast Run / Baseline por setor (alinhamento)
+
+Um forecast_run deve armazenar:
+
+run_date, week_start, week_end, created_at
+
+baseline_locked (bool)
+
+E snapshot por setor (tabela filha) para não misturar:
+
+forecast_run_sector_snapshot com: forecast_run_id, sector_id, occ_projection_by_day_json, rules_snapshot_json, params_snapshot_json.
+
+Assim: o baseline da semana preserva o que foi “planejado na sexta”, e o sistema pode sugerir ajustes diários sem perder o baseline.
+
+B) FRONTEND — Telas e Navegação
+B1) Atividades
+
+Alterar UI de Activities para:
+
+Dropdown de setor (obrigatório) e listagem filtrada por setor.
+
+Form de criação exige setor selecionado.
+
+Exibir coluna “Setor” ou badge.
+
+B2) Regras (DIVIDIR EM 2 TELAS)
+
+Criar menu “Regras” com 2 abas/telas:
+
+Regras Trabalhistas (Globais) — uma tela única editável.
+
+Regras Operacionais (Por Setor) — topo com botões/abas para cada setor cadastrado:
+
+Ao clicar no setor, carrega operational-rules daquele setor.
+
+IMPORTANTE: manter a governança funcionando, mas a UI deve ser genérica (nada de “GovernanceRulesPage” como único lugar).
+
+B3) Schedule / Escalas
+
+Na tela de escala, o usuário deve:
+
+escolher setor
+
+escolher semana
+
+escolher Forecast Run (baseline) OU “usar último run”
+
+Mostrar claramente:
+
+“Baseline (sexta-feira)” vs “Recomendação atual (diária)”
+
+indicador do delta (diferença) se existir
+
+C) Serviços (Lógica) — Preparar multissetor sem reescrever tudo
+C1) Interface de geradores por setor
+
+Criar uma interface/registry no backend:
+
+schedule_generators/{sector_code}.py (ex.: governance, reception, maintenance futuramente)
+
+Um dispatcher: generate_schedule(sector_id, week_start, forecast_run_id, ...)
+
+Neste prompt, apenas governança precisa estar implementada, mas o design deve permitir plugar outros.
+
+C2) Governança usa regras operacionais do setor + labor_rules global
+
+Ajustar o gerador da governança para:
+
+Buscar labor_rules global
+
+Buscar sector_operational_rules do setor “Governança”
+
+Buscar weekly_parameters do setor (se existir)
+
+Buscar baseline do forecast run (snapshot)
+
+Produzir:
+
+quantidade de camareiras por dia
+
+janelas de entrada / intervalo 1h / saída
+
+respeitando limites trabalhistas globais
+
+D) Auditoria e Compatibilidade
+
+Não quebrar endpoints existentes: se necessário, manter rotas antigas e apontar para as novas internamente.
+
+Logar alterações em audit_log quando:
+
+regras trabalhistas globais mudarem
+
+regras operacionais por setor mudarem
+
+atividades forem alteradas
+
+E) Entregáveis do Prompt 8 (o que deve aparecer pronto)
+
+Atividades vinculadas a setor (backend + frontend).
+
+Tela “Regras Trabalhistas (Globais)” funcionando.
+
+Tela “Regras Operacionais (Por Setor)” com botões/abas por setor e CRUD funcionando.
+
+Ajustes de forecast run snapshot por setor (estrutura pronta).
+
+Nenhuma regressão na governança.
+
+Faça commits lógicos e garanta que o app rode.

@@ -1,0 +1,89 @@
+Você é um Arquiteto Sênior do AutoCore e deve implementar incrementos funcionais SEM criar dados fictícios.
+
+OBJETIVO
+Incrementar o módulo “Atividades” com:
+(A) Campo “Classificação da Atividade”
+(B) Regras de recorrência por periodicidade
+(C) Novo cadastro “Periodicidades” em Cadastros
+(D) Interpretação das periodicidades na Programação Semanal
+
+REGRAS DE NEGÓCIO
+1) Em “Atividades”, adicionar o campo obrigatório: classificacao_atividade com as opções:
+   - "CALCULADA_PELO_AGENTE"
+   - "RECORRENTE"
+   - "EVENTUAL"
+
+2) Significado e comportamento:
+   2.1) CALCULADA_PELO_AGENTE
+        - São atividades cuja necessidade varia por parâmetros do setor (ex.: Governança: ocupação, check-ins, check-outs, HP).
+        - O usuário CADASTRA a atividade, mas NÃO precisa agendar manualmente.
+        - A inserção na programação da semana é feita automaticamente pelo agente (modo AUTO),
+          conforme regras do setor (ver módulo “Regras de Cálculos por Setor”).
+        - Deve existir um driver claro (ex.: “ocupacao”, “checkins”, “checkouts”, “hp”, “parametro_setor”),
+          mas a lógica final de inserção deve ser definida no módulo de regras por setor.
+
+   2.2) RECORRENTE
+        - Exige um campo adicional obrigatório ao selecionar RECORRENTE:
+          periodicidade_id (chave estrangeira para “Periodicidades”).
+        - A programação semanal deve automaticamente incluir atividades recorrentes compatíveis com a semana selecionada,
+          respeitando a periodicidade (diária, semanal, quinzenal etc.).
+        - A regra de interpretação da periodicidade deve ser centralizada em Service (sem lógica no frontend).
+
+   2.3) EVENTUAL
+        - Não tem periodicidade.
+        - Só entra na programação semanal quando o usuário agendar manualmente.
+
+3) Criar em “Cadastros” um novo menu: “Periodicidades”
+   - CRUD completo (listar/criar/editar/inativar).
+   - Campos mínimos:
+     - nome (ex.: "Diária", "Semanal", "Quinzenal", "Mensal")
+     - tipo (ENUM ou string controlada, ex.: DAILY/WEEKLY/FORTNIGHTLY/MONTHLY)
+     - intervalo_dias (ex.: 1, 7, 14, 30) ou regras equivalentes
+     - ativo (bool)
+
+4) Programação de Atividades da Semana
+   - Ao abrir/gerar a programação de uma semana para um setor:
+     - Incluir automaticamente todas as atividades RECORRENTES aplicáveis àquela semana
+     - Permitir que EVENTUAIS sejam adicionadas manualmente
+     - Marcar CALCULADAS_PELO_AGENTE como “AUTO-PLANNED” quando inseridas pelo agente (não pelo usuário)
+   - NÃO inventar itens se o setor não tem atividades cadastradas: exibir estado vazio e mensagens claras.
+
+ARQUITETURA (OBRIGATÓRIA)
+- Backend FastAPI seguindo MVC + Services:
+  - app/models/  (SQLAlchemy models)
+  - app/schemas/ (Pydantic DTOs)
+  - app/routers/ (endpoints REST)
+  - app/services/ (regras e cálculos)
+  - app/datalayer/adapters/ (normalização/ingestão quando aplicável)
+- Banco PostgreSQL com Alembic:
+  - Criar migrations novas para:
+    a) adicionar classificacao_atividade e periodicidade_id em atividades
+    b) criar tabela periodicidades (e relacionamentos)
+  - PROIBIDO editar migrations antigas já existentes.
+- Frontend React:
+  - Atualizar tela de “Atividades” para mostrar:
+    - dropdown Classificação
+    - se RECORRENTE: dropdown Periodicidade (carregado via API)
+  - Atualizar navegação (Sidebar) respeitando taxonomia:
+    - Cadastros > Periodicidades
+    - Cadastros > Atividades (permanece)
+- Integração:
+  - Criar endpoints REST:
+    - /api/periodicidades (CRUD)
+    - /api/atividades (atualizar create/update/read para incluir novos campos)
+    - Ajustar endpoint de programação semanal para “expandir recorrentes”
+
+VALIDAÇÕES E ERROS
+- Em create/update de atividade:
+  - classificacao_atividade obrigatório
+  - se RECORRENTE: periodicidade_id obrigatório e válido
+  - se EVENTUAL/CALCULADA_PELO_AGENTE: periodicidade_id deve ser nulo
+- Mensagens de erro em Português, explícitas.
+- Sem mocks e sem “fallback silencioso”.
+
+CRITÉRIOS DE ACEITAÇÃO (TESTES MANUAIS)
+1) Cadastrar periodicidades (diária/semanal/quinzenal) e listar após reload.
+2) Cadastrar atividade RECORRENTE com periodicidade e ver que ela entra automaticamente na semana.
+3) Cadastrar atividade EVENTUAL e confirmar que só entra quando usuário agenda.
+4) Cadastrar atividade CALCULADA_PELO_AGENTE e confirmar que ela NÃO exige agendamento manual e pode ser inserida pelo agente via modo AUTO.
+5) Garantir persistência no banco e ausência de dados fictícios.

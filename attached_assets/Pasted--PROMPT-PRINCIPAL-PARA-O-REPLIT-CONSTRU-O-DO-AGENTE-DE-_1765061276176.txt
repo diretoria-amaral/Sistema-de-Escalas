@@ -1,0 +1,70 @@
+# PROMPT PRINCIPAL PARA O REPLIT – CONSTRUÇÃO DO AGENTE DE IA DE ESCALAS
+
+## CONTEXTO DO NEGÓCIO
+Você está desenvolvendo um agente de IA para elaborar escalas semanais de trabalho em um hotel com forte sazonalidade, pickup curto (4,7 dias), convocações com 72h de antecedência e necessidade de conformidade trabalhista para colaboradores fixos e intermitentes.
+
+## DIRETRIZES E OBJETIVOS DO SISTEMA
+- Criar cadastro de colaboradores por setor, função e CBO.
+- Criar cadastro de atividades com tempos médios por tarefa.
+- Criar painel interativo para o usuário ajustar regras trabalhistas e operacionais.
+- Elaborar escalas semanais sempre às quintas-feiras.
+- Aplicar todas as regras legais e operacionais ao gerar a escala.
+- Gerar escala detalhada para cada colaborador conforme modelo fornecido.
+- Implementar lógica do setor de governança como primeira fase.
+
+## REGRAS TRABALHISTAS (EDITÁVEIS PELO USUÁRIO)
+- Limite de horas diárias.
+- Intervalo mínimo entre turno e turno.
+- Ao menos um domingo sem convocação por mês.
+- Limite de 44h semanais (sem extras) e 48h (com extras).
+- Controle de férias (30 dias/ano, com fracionamento permitido).
+- Intervalo intrajornada de 1h a 2h.
+- Convocações devem respeitar atividades compatíveis com o CBO.
+
+## REGRAS OPERACIONAIS (EDITÁVEIS)
+- Alternância obrigatória de horários e atividades.
+- Variação semanal de 36 a 44 horas por colaborador.
+- Preferência por regime 5x2, podendo alternar para 6x1.
+- Dois dias de folga por semana, idealmente consecutivos.
+- Painel permite indicar feriados na semana.
+
+## INDICADORES DO SETOR DE GOVERNANÇA
+- Ocupação diária prevista.
+- Número de check-outs e estadas.
+- Tempos médios:
+  • Vago Sujo = 25 min
+  • Estada = 10 min
+
+## CÁLCULO DE NECESSIDADE
+total_min = (vagos_sujos * 25) + (estadas * 10)
+total_horas = total_min / 60
+colaboradores_necessarios = total_horas / jornada_media
+
+## CÁLCULO DAS JORNADAS
+A escala deve ser apresentada com:
+Entrada – Início Intervalo – Fim Intervalo – Saída
+O intervalo deve ter:
+- mínimo de 1 hora
+- máximo de 2 horas
+- dispensado em jornadas até 4 horas
+
+## OUTPUT DA ESCALA
+Gerar tabela com:
+Dia | Data | Horas | Entrada | Intervalo Início | Intervalo Fim | Saída | Atividade
+
+## PAINEL DE PARÂMETROS (INTERATIVO)
+Permitir ao usuário ajustar:
+- regras trabalhistas;
+- regras operacionais;
+- tempos médios por atividade;
+- indicação de feriados na semana;
+- preferências de alternância;
+- regimes 5x2 e 6x1.
+
+## BOTÃO "LÓGICA"
+Criar campo editável para que o administrador escreva regras de lógica em linguagem natural.
+O sistema deve interpretar estas regras e injetá-las no motor de cálculo da escala.
+
+## OBJETIVO
+Corrigir falhas da primeira versão e implementar a lógica correta para Governança.
+A escala deve ser inicialmente sugestiva, com campo de edição manual.

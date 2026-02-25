@@ -1,0 +1,159 @@
+OBJETIVO
+Criar um novo menu de CADASTRO DE TURNOS DE TRABALHO por setor, permitindo definir horários
+por dia da semana (segunda a domingo) com:
+- nome do turno
+- horário início
+- saída para intervalo
+- retorno do intervalo
+- final do turno
+- classificação do horário de início: MANDATÓRIO ou FLEXÍVEL
+- classificação do horário de final: MANDATÓRIO ou FLEXÍVEL
+
+MOTIVAÇÃO
+Alguns setores têm horários de atendimento ao público. Mesmo que o agente recomende iniciar/terminar
+em outro horário, se o início/fim estiver marcado como MANDATÓRIO, o agente deve respeitar.
+
+========================
+1) BACKEND – MODELOS E MIGRATIONS
+========================
+
+Criar tabelas:
+
+A) work_shifts (cabeçalho)
+- id (PK)
+- sector_id (FK)
+- name (string, required)
+- is_active (bool default true)
+- created_at, updated_at
+
+B) work_shift_day_rules (detalhe por dia)
+- id (PK)
+- work_shift_id (FK -> work_shifts.id)
+- weekday (int 1-7 usando ISO: 1=Seg ... 7=Dom)
+- start_time (time, nullable)
+- break_out_time (time, nullable)   # saída intervalo
+- break_in_time (time, nullable)    # retorno intervalo
+- end_time (time, nullable)
+- start_constraint (enum: MANDATORY | FLEXIBLE, default FLEXIBLE)
+- end_constraint (enum: MANDATORY | FLEXIBLE, default FLEXIBLE)
+
+Regras:
+- Cada (work_shift_id, weekday) deve ser único.
+- Validar coerência:
+  - se start_time definido, end_time deve estar definido (e vice-versa)
+  - break_out_time e break_in_time devem estar ambos definidos ou ambos nulos
+  - break_out_time deve ocorrer após start_time (no mesmo dia)
+  - break_in_time deve ocorrer após break_out_time
+  - end_time deve ocorrer após break_in_time (quando intervalo existe) e após start_time
+  - se algum horário cruzar meia-noite, tratar explicitamente (NESTA V1: não permitir cruzar meia-noite; retornar erro claro)
+
+Criar enums no backend:
+- ShiftTimeConstraint = {MANDATORY, FLEXIBLE}
+
+Implementar schemas:
+- WorkShiftCreate/Update
+- WorkShiftDayRuleCreate/Update
+- WorkShiftResponse (com days: [..])
+
+========================
+2) BACKEND – ENDPOINTS
+========================
+
+Base path: /api/work-shifts
+
+1) GET /api/work-shifts?sector_id=...
+- lista turnos do setor (ativos por default, com opção include_inactive)
+
+2) POST /api/work-shifts
+Payload:
+{
+  sector_id,
+  name,
+  days: [
+    { weekday:1, start_time:"08:00", break_out_time:"12:00", break_in_time:"13:00", end_time:"17:00",
+      start_constraint:"MANDATORY", end_constraint:"FLEXIBLE" },
+    ...
+  ]
+}
+- criar work_shift e upsert day_rules para 7 dias (seg-dom)
+
+3) PUT /api/work-shifts/{id}
+- editar nome, status e day_rules (upsert)
+- validações iguais ao POST
+
+4) DELETE /api/work-shifts/{id}
+- soft delete: is_active=false
+
+5) GET /api/work-shifts/{id}
+- retornar completo
+
+========================
+3) FRONTEND – MENU E UX
+========================
+
+Criar menu:
+Cadastros > Turnos de Trabalho
+
+Fluxo:
+1) Selecionar Setor (dropdown obrigatório)
+2) Listar turnos existentes do setor (cards ou tabela)
+   - Nome, status, “Editar”, “Desativar”
+3) Botão “Novo Turno”
+
+Form “Novo/Editar Turno”:
+- Nome do turno (input)
+- Grade semanal (Seg–Dom), cada linha = um dia
+  Colunas:
+  - Início (time input)
+  - Início: Mandatório/Flexível (select pequeno ao lado do início)
+  - Saída intervalo (time input)
+  - Retorno intervalo (time input)
+  - Final (time input)
+  - Final: Mandatório/Flexível (select pequeno ao lado do final)
+
+Requisitos de UI:
+- Inputs de horário devem ser do tipo time (HH:MM), com máscara/validação.
+- Para dias sem turno, permitir deixar todos horários vazios (folga ou não aplicável).
+- Mostrar erros por linha (ex.: “Retorno do intervalo deve ser após saída”).
+- Layout agradável:
+  - usar tabela com cabeçalho fixo ou cards por dia (preferível tabela)
+  - boa largura para não cortar conteúdo
+
+Persistência:
+- ao salvar, toast sucesso e recarregar lista
+- manter setor selecionado
+- não permitir tela branca (try/catch, error boundary)
+
+========================
+4) INTEGRAÇÃO COM O AGENTE (OBRIGATÓRIO)
+========================
+
+Atualizar o motor de geração de escala/turnos para considerar os turnos cadastrados:
+
+Regras:
+- Se existir turno(s) cadastrado(s) para o setor:
+  A) Para cada dia, o agente pode propor turnos que respeitem:
+     - Se start_constraint = MANDATORY, o início do turno alocado deve ser exatamente start_time
+     - Se end_constraint = MANDATORY, o fim do turno alocado deve ser exatamente end_time
+     - Se FLEXIBLE, o agente pode ajustar dentro de tolerâncias (definir em regras do sistema/operacionais)
+  B) Se não houver turnos cadastrados:
+     - agente segue livre para propor turnos com base na curva de checkouts/checkins e demanda
+
+- Se o agente não conseguir atender constraints mandatórias por conflito com regras trabalhistas:
+  - deve registrar no trace/memória de cálculo a regra violada e o motivo
+  - e sugerir alternativa (ex.: adicionar mais gente ou mudar folga)
+
+Trace:
+- adicionar step "SHIFT_CONSTRAINTS" em agent_trace_step
+- registrar quais constraints foram aplicadas e em quais dias
+
+========================
+5) CRITÉRIOS DE ACEITE
+========================
+- É possível cadastrar um turno por setor com regras por dia seg-dom
+- Horários são campos time (HH:MM)
+- Início e final possuem “Mandatório/Flexível”
+- Validações impedem horários inválidos
+- Turnos aparecem na lista do setor, podem ser editados e desativados
+- Geração de escala respeita horários mandatórios (quando existirem)
+- Quando não puder respeitar, registra no trace e explica

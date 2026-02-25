@@ -1,0 +1,128 @@
+PROMPT 7 (COPIAR/COLAR) — MULTISSETOR: ATIVIDADES VINCULADAS A SETOR + REGRAS EM 2 CAMADAS (TRABALHISTAS GLOBAIS + OPERACIONAIS POR SETOR)
+
+CONTEXTO
+Este agente deixou de ser exclusivo de Governança e precisa operar com múltiplos setores (Governança, Recepção, Manutenção, etc.). Já existe Data Lake com HP/Checkin/Checkout e base de cálculo. Agora vamos ajustar o “coração operacional” para ficar multissetor de verdade:
+1) Cadastro de ATIVIDADES precisa ter vínculo obrigatório com SETOR.
+2) Aba “Regras” precisa ser separada em duas camadas:
+   (A) Regras TRABALHISTAS (globais, válidas para todos os setores)
+   (B) Regras OPERACIONAIS e INDICADORES (específicas por setor)
+3) UI deve permitir trocar rapidamente o setor-alvo para visualizar e editar regras operacionais (botões ou abas por setor cadastrado).
+
+OBJETIVO
+- Garantir que toda lógica de escala e cálculo use “setor” como chave principal.
+- Evitar mistura de regras operacionais entre setores.
+- Manter rastreabilidade/auditoria e compatibilidade com o que já está implementado.
+
+REQUISITOS FUNCIONAIS
+
+(1) ATIVIDADES COM VÍNCULO AO SETOR
+1.1 Banco de dados
+- Ajustar o modelo de Activity/ActivityCatalog (o nome que vocês usam) para incluir:
+  - sector_id (FK para sector), NOT NULL
+- Criar migration.
+- Se já houver registros existentes sem setor, criar fallback:
+  - Criar “Setor Padrão” (ex.: Governança) e associar atividades legadas a ele
+  - ou, se já houver governança explícita, setar sector_id = sector.id de Governança
+
+1.2 API / Backend
+- Atualizar schemas/serializers:
+  - ActivityCreate/Update deve exigir sector_id
+  - ActivityRead deve retornar também sector (id e name) ou sector_id
+- Atualizar endpoints:
+  - GET /activities deve aceitar filtro por sector_id (query param)
+  - POST/PUT/PATCH devem validar sector_id existente
+
+1.3 Frontend
+- Tela de Atividades:
+  - Incluir campo obrigatório “Setor” (dropdown com setores cadastrados)
+  - Exibir coluna “Setor” na tabela/listagem
+  - Filtro por setor no topo (default: “Todos” ou último setor utilizado)
+- Garantir que ao criar/editar atividade, sector_id seja enviado.
+
+(2) REGRAS EM DUAS CAMADAS
+2.1 Regras Trabalhistas (Globais)
+- Criar uma tela/aba nova: “Regras Trabalhistas (Globais)”
+- Estas regras NÃO dependem de setor.
+- Exemplos do que fica aqui (ajuste conforme já existe):
+  - antecedência mínima de convocação (ex.: 72h)
+  - limites de horas por dia e por semana (min/max)
+  - descanso mínimo entre jornadas
+  - regras de almoço/intervalo (1h) e limites de janela
+  - restrições para evitar descaracterização do intermitente (critérios/alertas)
+  - regras gerais de “convocações” e validações
+- Persistência:
+  - Tabela global_labor_rules (ou labor_rules_global) com versionamento e audit_log
+  - Alternativa: tabela existing labor_rules com sector_id NULL significando global
+- API:
+  - GET/PUT global rules
+  - Audit log de alterações (quem mudou, quando, antes/depois)
+
+2.2 Regras Operacionais por Setor
+- Criar nova tela/aba: “Regras Operacionais por Setor”
+- UI: deve listar botões/abas para cada setor cadastrado (ex.: chips, tabs, sidebar):
+  - [Governança] [Recepção] [Manutenção] [...]
+- Ao clicar em um setor:
+  - carregar regras/parametrizações daquele setor
+  - permitir editar e salvar somente para aquele setor
+
+- Conteúdo mínimo das regras operacionais por setor (MVP):
+  A) Metas e aproveitamento
+     - target_utilization_pct (meta de aproveitamento de horas do setor)
+     - buffer_produtividade_pct (margem)
+  B) Templates de turno do setor (lista)
+     - start/end + regra do intervalo 1h (posicionamento permitido)
+  C) Indicadores específicos do setor
+     - Governança: tempo_vago_sujo_min, tempo_estadia_min
+     - Recepção: cobertura mínima por hora, picos checkin/checkout, SLA atendimento
+     - Manutenção: cobertura mínima, SLA chamados, plantão
+  D) Ligações com “atividades” do setor:
+     - Regras operacionais devem poder apontar/consumir atividades cadastradas daquele setor (por isso o vínculo activity.sector_id é obrigatório)
+
+- Persistência:
+  - sector_operational_rules (sector_id, params_json, version, updated_at)
+  - Ou reutilizar tabela existente sector_parameters (sector_id, params_json) com uma “categoria” = operational_rules
+- API:
+  - GET/PUT por sector_id
+  - Ao salvar, registrar audit_log
+
+(3) AJUSTES DE LÓGICA: SEMPRE “SECTOR-FIRST”
+3.1 Schedule Generator / Calculator
+- Toda execução de cálculo/escala deve receber sector_id.
+- Regras aplicadas em cascata:
+  - primeiro: regras trabalhistas globais
+  - depois: regras operacionais do setor
+  - por fim: overrides manuais da semana (se existirem)
+- Validação:
+  - schedule_validator deve usar regras globais + setor
+  - erros devem indicar claramente qual regra falhou (global vs setor)
+
+3.2 UI do planejamento
+- Na tela de escala/planejamento, incluir seletor de setor no topo.
+- Ao trocar setor, trocar:
+  - lista de colaboradores (filtrados por sector_id)
+  - atividades disponíveis (filtradas por sector_id)
+  - regras operacionais exibidas
+  - resultados de cálculo/escala
+
+REQUISITOS NÃO-FUNCIONAIS
+- Manter compatibilidade com o que já existe (não quebrar endpoints atuais sem oferecer fallback).
+- Criar migrations idempotentes, com seed mínimo (setor padrão se necessário).
+- Testes básicos:
+  - criar atividade exige setor
+  - listar atividades por setor
+  - editar regras globais
+  - editar regras operacionais por setor e garantir isolamento (alterar Governança não muda Recepção)
+- Atualizar README/replit.md com:
+  - “Como operar: upload diário + como configurar regras globais e por setor”
+
+ENTREGA ESPERADA
+- Código completo com:
+  - migrations
+  - modelos atualizados
+  - endpoints atualizados
+  - telas atualizadas e navegáveis
+  - validação usando regras em cascata
+- Confirmar em um resumo:
+  - quais tabelas foram criadas/alteradas
+  - quais rotas novas/alteradas
+  - onde ficam as telas: “Regras Trabalhistas (Globais)” e “Regras Operacionais por Setor”

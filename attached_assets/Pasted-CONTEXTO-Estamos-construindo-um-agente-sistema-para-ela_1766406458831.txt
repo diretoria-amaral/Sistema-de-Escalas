@@ -1,0 +1,150 @@
+CONTEXTO
+Estamos construindo um agente/sistema para elaboração de escalas de convocação (contrato intermitente) em hotel. A fase anterior (V4) já foi implementada e aprovada: Data Lake com ingestão automática via upload diário de relatórios do Desbravador (PDF/Excel), incluindo:
+- HP diário (mês corrente + próximo mês) com generated_at e regra REAL (até ontem) vs FORECAST (de hoje em diante) por as_of_date.
+- Checkin diário (PDF) e Checkout diário (PDF) com detecção por conteúdo e extração mínima para estatística horária.
+- Deduplicação de snapshots (target_date, generated_at), precedência REAL > FORECAST no occupancy_latest, EWMA de bias por dia da semana, e distribuição horária para turnos.
+
+OBJETIVO DO PROMPT 2
+Implementar o MÓDULO DE GOVERNANÇA (CAMAREIRAS) para:
+1) Calcular a PROJEÇÃO AJUSTADA de ocupação na sexta-feira para a semana seguinte (seg–dom), usando:
+   - occ_raw(d): forecast do HP mais recente disponível na sexta
+   - bias_pp(weekday): estatística EWMA por dia da semana
+   - occ_adj(d) = clamp(occ_raw(d) + bias_pp(weekday(d)) + safety_pp(weekday(d)), 0..100)
+2) Estimar DEMANDA DE LIMPEZA por dia e dimensionar QUANTIDADE DE CAMAREIRAS.
+3) Gerar ESCALAS com horários individuais (entrada, 1h refeição, saída) usando:
+   - Templates de turnos configuráveis
+   - Janelas operacionais e picos com base nas distribuições horárias de checkouts/checkins
+4) Reavaliar DIARIAMENTE e sugerir AJUSTES (recomendação) conforme novos uploads de HP e checkin/checkout.
+5) Manter AUDITORIA e TRANSPARÊNCIA: mostrar cálculos, parâmetros usados e versão do método.
+
+REGRAS / DADOS DISPONÍVEIS (V4)
+- occupancy_snapshots/occupancy_latest: ocupação diária REAL/FORECAST com generated_at.
+- weekday_bias_stats (EWMA) para bias_pp por dia da semana.
+- hourly_distribution_stats: percentuais por weekday e hour_timeline para checkins e checkouts (checkout: 0–11/12; checkin: 14–35 conforme normalização).
+- Temos cadastros: setor, cargos/roles, funcionários, parâmetros semanais, schedules e shifts (ou equivalente).
+
+ENTREGAS (BACKEND)
+A) MODELOS/TABELAS (se já existir algo semelhante, reaproveitar; senão criar)
+1) SectorOperationalParameters (por setor, versionável por semana ou “vigente”):
+   - sector_id
+   - target_utilization_pct (meta de aproveitamento de horas produtivas)
+   - buffer_pct (margem de segurança produtividade)
+   - cleaning_time_vago_sujo_min (padrão inicial 25)
+   - cleaning_time_estadia_min (padrão inicial 10)
+   - safety_pp_by_weekday (mapa SEG..DOM, default 0)
+   - shift_templates (lista: start_time, end_time, lunch_rules)
+   - lunch_rules (ex.: duração 60min; janela permitida; min_hours_before_lunch; max_hours_before_lunch)
+   - constraints_json (ex.: min/max horas por dia; descanso; etc.)
+   - active_from (data) / week_start (se preferir por semana)
+   - created_at, updated_at
+
+2) ForecastRun + ForecastDaily:
+   - run_id, run_date (sexta)
+   - horizon_start (segunda), horizon_end (domingo)
+   - method_version, params_json
+   - ForecastDaily: target_date, weekday_pt, occ_raw, bias_pp_used, safety_pp_used, occ_adj
+
+3) HousekeepingDemandDaily:
+   - target_date
+   - occupied_rooms (derivado de occ_adj)
+   - departures_count (do checkout diário, agregado por data)
+   - arrivals_count (do checkin diário, agregado por data operacional)
+   - stayovers_estimated
+   - minutes_required_raw
+   - minutes_required_buffered
+   - hours_productive_required
+   - hours_total_required
+
+4) HousekeepingSchedulePlan:
+   - week_start, sector_id, status (draft/final)
+   - total_headcount_planned
+   - summary_json (KPIs: horas, margens, risco)
+   - relação com DailyShift (já existente) ou criar.
+
+B) SERVIÇOS (código)
+1) governance_forecast_service.py
+   - função generate_weekly_forecast(run_date):
+     a) define horizon (seg-dom seguinte)
+     b) para cada dia, obtém occ_raw de occupancy_latest (FORECAST) mais apropriado “as-of run_date”
+     c) obtém bias_pp do weekday_bias_stats (metric_name='occupancy_pp_error' ou equivalente)
+     d) aplica safety_pp (dos parâmetros do setor governança)
+     e) grava ForecastRun e ForecastDaily
+
+2) governance_demand_service.py
+   - função compute_housekeeping_demand(forecast_run_id, total_rooms):
+     a) occupied_rooms(d) = round(total_rooms * occ_adj(d)/100)
+     b) departures_count(d): agregar eventos de checkout (do data lake) por data
+     c) arrivals_count(d): agregar eventos de checkin por “dia operacional”
+     d) stayovers_estimated(d) = max(occupied_rooms(d) - departures_count(d), 0)
+        (se departures faltar, fallback: occupied_rooms(d) - arrivals_count(d) com clamp)
+     e) minutes_required = departures*tempo_vago_sujo + stayovers*tempo_estadia
+     f) aplicar buffer_pct
+     g) hours_productive_required = minutes/60
+     h) hours_total_required = hours_productive_required / (target_utilization_pct/100)
+     i) gravar HousekeepingDemandDaily
+
+3) governance_schedule_generator.py
+   - função generate_housekeeping_schedule(week_start, sector_id):
+     a) obter DemandDaily e parâmetros
+     b) calcular headcount diário:
+        headcount(d) = ceil(hours_total_required(d) / hours_per_shift_template_reference)
+        (usar template “principal” ou média ponderada; manter explicável)
+     c) distribuir turnos usando templates e picos:
+        - obter hourly_distribution_stats para checkout (weekday, 0–12) e checkin (weekday, 14–35)
+        - derivar janelas críticas (ex.: Hc80, Hi20 etc. por cumulativo)
+        - regra simples e explicável: alocar mais pessoas em templates que cobrem o intervalo crítico (Hc80 → Hi20/Hi30)
+     d) almoço: 60min respeitando lunch_rules e evitando horários críticos
+     e) gerar DailyShift por colaborador (se houver pool) ou gerar “vagas de escala” (slots) e depois alocar colaboradores.
+        OBS: nesta fase, se ainda não houver algoritmo de alocação de nomes, gerar slots + permitir atribuição manual.
+     f) gravar HousekeepingSchedulePlan e shifts
+
+4) daily_replan_service.py
+   - função suggest_daily_adjustments(date_today):
+     - compara occ_adj original da sexta vs forecast mais recente do HP diário para os próximos dias
+     - se variação acima de threshold (ex.: 5pp ou configurável), sugerir:
+       * +/− headcount
+       * redistribuição de templates
+     - não altera automaticamente: gera “recomendações” com justificativa e logs.
+
+C) ROTAS/ENDPOINTS (FastAPI)
+1) GET/POST /api/governance/parameters
+   - CRUD dos parâmetros operacionais da Governança (por semana ou vigente).
+2) POST /api/governance/forecast/run?run_date=YYYY-MM-DD
+   - dispara geração de ForecastRun (sexta).
+3) POST /api/governance/demand/compute?forecast_run_id=...
+4) POST /api/governance/schedule/generate?week_start=YYYY-MM-DD
+5) GET /api/governance/schedule?week_start=...
+6) GET /api/governance/replan/suggestions?date=YYYY-MM-DD
+
+D) REGRAS IMPORTANTES (exigência do negócio)
+- A escala “base” é gerada na sexta-feira de manhã para segunda–domingo, para cumprir antecedência mínima (72h).
+- O sistema deve continuar recalculando diariamente e sugerindo ajustes.
+- Parâmetros devem ser por setor (governança agora) e editáveis em “painel de parâmetros”.
+- Explicabilidade: cada número deve ter trilha (inputs → fórmula → resultado).
+- Versionamento: method_version e parser_version em logs.
+
+ENTREGAS (FRONTEND)
+Criar/ajustar as páginas:
+1) GovernanceParametersPage
+   - formulário para: tempos (25/10), utilization, buffer, safety_pp por weekday, templates, lunch rules, thresholds.
+2) GovernanceForecastPage (ou seção dentro de Intelligence/Schedule)
+   - tabela seg–dom: occ_raw, bias_pp, safety_pp, occ_adj (explicação).
+3) GovernanceDemandPage
+   - tabela diária: occupied_rooms, departures, stayovers, minutos, horas, headcount.
+4) SchedulePage (governança)
+   - exibir escala com filtros por dia e por template
+   - mostrar gráfico simples (ou tabela) de cobertura por hora (quantas camareiras ativas por faixa).
+5) ReplanSuggestionsPanel
+   - lista de recomendações diárias com “aceitar/recusar” registrando audit_log.
+
+ACEITAÇÃO / TESTES
+- Testar com os PDFs já enviados (HP + checkin/checkout de 01–03/dez) e validar:
+  1) occ_raw e occ_adj coerentes (occ_adj = raw + bias + safety, clamp).
+  2) departures_count batendo com a contagem de linhas do checkout diário.
+  3) arrivals_count batendo com a contagem do checkin diário, respeitando dia operacional.
+  4) Cálculo de minutos e headcount reproduzível.
+- Garantir que, ao reprocessar o mesmo relatório, não duplica snapshots nem eventos.
+- Garantir endpoints e UI funcionais e com mensagens de erro amigáveis.
+
+INSTRUÇÃO FINAL
+Implemente o módulo inteiro mantendo padrão do projeto atual (FastAPI + SQLAlchemy, React/Vite no frontend), com código organizado, logs/auditoria, e telas interativas para ajuste de parâmetros.

@@ -1,0 +1,107 @@
+OBJETIVO
+Implementar um hotfix em Cadastros para:
+(A) corrigir a periodicidade ANUAL que é detectada como existente, mas não aparece na tela de periodicidades;
+(B) restaurar a funcionalidade de ALTERAR ORDEM (reorder via drag-and-drop) das regras dentro de cada categoria/rigidez.
+
+========================
+A) PERIODICIDADE ANUAL NÃO APARECE
+========================
+
+SINTOMA
+- O sistema identifica a periodicidade anual como já existente (provavelmente em validação/seed),
+- mas ela não aparece na tela de listagem de periodicidades.
+
+CAUSAS PROVÁVEIS (investigar e corrigir)
+1) O endpoint GET de periodicidades está filtrando indevidamente:
+   - active_only=true omitindo a anual por estar inativa
+   - ou filtrando por interval_unit incorretamente
+   - ou filtrando por tenant/sector indevido
+2) A periodicidade anual está sendo criada com algum campo que a exclui da listagem:
+   - is_active=false
+   - deleted_at preenchido
+   - categoria/tipo inesperado
+3) O frontend está filtrando o array retornado e removendo interval_unit='YEARS'.
+
+CORREÇÕES OBRIGATÓRIAS
+BACKEND
+1) Auditar o endpoint:
+   GET /api/periodicities (ou equivalente)
+   - Deve retornar TODAS as periodicidades ativas.
+   - Garantir que a anual esteja ACTIVE.
+   - Se existir parâmetro active_only, default = true mas anual deve estar ativa.
+
+2) Criar/ajustar a função "get_or_create_annual_periodicity":
+   - annual = { name:"Anual", interval_unit:"YEARS", interval_value:1, is_active:true }
+   - Se existir, fazer UPDATE garantindo is_active=true e deleted_at=null.
+   - Deve ser idempotente.
+
+3) Garantir consistência de unicidade:
+   - único por (interval_unit, interval_value, name) ou somente (interval_unit, interval_value)
+   - evitando duplicação silenciosa
+
+FRONTEND
+4) Na listagem de periodicidades:
+   - NÃO filtrar interval_unit no frontend.
+   - Exibir "A cada {interval_value} {unidade}" com unidade pluralizada.
+   - Garantir que interval_unit='YEARS' seja renderizado corretamente como "ano(s)".
+
+TESTE MANUAL
+- Limpar cache/reload e verificar que “Anual – a cada 1 ano” aparece.
+- Se “Anual” já existia inativa, deve passar a aparecer (ativada).
+
+========================
+B) RESTAURAR REORDER DE REGRAS (DRAG & DROP)
+========================
+
+SINTOMA
+- Após as últimas alterações de layout, a função de alterar ordem das regras dentro de cada categoria/rigidez desapareceu.
+
+COMPORTAMENTO ESPERADO
+- Em cada menu de regras (global e setorial) e dentro de cada bloco:
+  - Mandatórias
+  - Desejáveis
+  - Flexíveis
+deve existir drag-and-drop para reordenar regras, persistindo a nova ordem no backend.
+
+REQUISITOS DE IMPLEMENTAÇÃO
+FRONTEND
+1) Restaurar o DnD no componente base (RulesEditorBase ou equivalente):
+   - permitir reorder APENAS dentro do mesmo bloco (mesma rigidez)
+   - ao soltar, chamar endpoint de reorder
+   - atualizar UI imediatamente (optimistic update) e reverter se falhar
+
+2) Garantir que a UI mostre claramente:
+   - número de prioridade (#01, #02...) recalculado após reorder
+   - handle de arraste visível
+
+BACKEND
+3) Garantir endpoint estável:
+   POST /api/rules/reorder
+   Payload:
+   {
+     scope: "GLOBAL" | "SECTOR",
+     sector_id?: number,
+     category: "LABOR" | "SYSTEM" | "OPERATIONAL" | "CALCULATION",
+     rigidity: "MANDATORY" | "DESIRABLE" | "FLEXIBLE",
+     ordered_rule_ids: [..]
+   }
+
+4) Reorder deve:
+   - validar que todas rules pertencem ao mesmo (scope+sector_id+category+rigidity)
+   - aplicar prioridades 1..N em transação
+   - retornar lista reordenada
+
+TESTE MANUAL
+- Reordenar 3 regras em “Operação > Mandatórias” e verificar persistência (reload).
+- Reordenar em “Trabalhistas > Desejáveis” (global) e verificar persistência.
+
+========================
+CRITÉRIO DE ACEITE (PASS/FAIL)
+========================
+PASSA se:
+- periodicidade ANUAL aparece na tela e pode ser usada.
+- reorder funciona em TODOS os menus e em todos os blocos de rigidez.
+
+FALHA se:
+- anual continua não aparecendo ou estiver inativa/oculta.
+- reorder só funcionar em alguns menus ou sumir após reload.
